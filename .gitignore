@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+.pytest_cache/
+
+# 运行时产物
+workspace/
+output/
+.runtime/
+.playwright-cli/
+interview-agent.db
+interview-agent.db-*
+
+# Node / 前端构建产物
+frontend/node_modules/
+frontend/dist/
+frontend/output/
+frontend/src-tauri/target/
+frontend/src-tauri/gen/schemas/
+
+# 日志
+*.log

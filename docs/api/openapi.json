@@ -1,0 +1,966 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Interview Agent Local API",
+    "version": "1.0.0",
+    "description": "Interview Agent 桌面应用的本地回环 JSON API。该契约是 HTTP 路径、请求体、响应体和错误结构的唯一事实源。"
+  },
+  "servers": [
+    {"url": "http://127.0.0.1:8000", "description": "本地开发与桌面应用"}
+  ],
+  "security": [],
+  "tags": [
+    {"name": "Runtime"},
+    {"name": "Projects"},
+    {"name": "Positions"},
+    {"name": "Resumes"},
+    {"name": "Sessions"},
+    {"name": "Candidates"},
+    {"name": "LLM settings"}
+  ],
+  "paths": {
+    "/health": {
+      "get": {
+        "tags": ["Runtime"],
+        "operationId": "getHealth",
+        "responses": {
+          "200": {"description": "服务可处理请求", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Health"}}}}
+        }
+      }
+    },
+    "/projects": {
+      "post": {
+        "tags": ["Projects"],
+        "operationId": "registerProjectKnowledge",
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ProjectKnowledge"}}}},
+        "responses": {
+          "201": {"description": "项目知识已注册", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ProjectKnowledge"}}}},
+          "400": {"$ref": "#/components/responses/InvalidRequest"}
+        }
+      }
+    },
+    "/projects/upload": {
+      "post": {
+        "tags": ["Projects"],
+        "operationId": "uploadProject",
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ProjectUploadRequest"}}}},
+        "responses": {
+          "201": {"description": "上传与分析完成", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ProjectAnalysis"}}}},
+          "400": {"$ref": "#/components/responses/InvalidRequest"},
+          "422": {"description": "项目分析失败；除标准错误字段外保留 ProjectAnalysis 状态字段", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ProjectAnalysisError"}}}}
+        }
+      }
+    },
+    "/projects/{project_id}/status": {
+      "parameters": [{"$ref": "#/components/parameters/ProjectId"}],
+      "get": {
+        "tags": ["Projects"],
+        "operationId": "getProjectStatus",
+        "responses": {
+          "200": {"description": "项目分析状态", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ProjectAnalysis"}}}},
+          "400": {"$ref": "#/components/responses/InvalidRequest"},
+          "404": {"$ref": "#/components/responses/NotFound"}
+        }
+      }
+    },
+    "/projects/{project_id}/knowledge": {
+      "parameters": [{"$ref": "#/components/parameters/ProjectId"}],
+      "get": {
+        "tags": ["Projects"],
+        "operationId": "getProjectKnowledge",
+        "responses": {
+          "200": {"description": "供领域评审流程消费的兼容知识模型", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ProjectKnowledge"}}}},
+          "400": {"$ref": "#/components/responses/InvalidRequest"},
+          "404": {"$ref": "#/components/responses/NotFound"}
+        }
+      }
+    },
+    "/positions": {
+      "get": {
+        "tags": ["Positions"],
+        "operationId": "listPositions",
+        "parameters": [
+          {"name": "candidate_id", "in": "query", "required": false, "description": "按候选人过滤；不传返回简历库全部简历", "schema": {"type": "string", "minLength": 1}},
+          {"name": "limit", "in": "query", "required": false, "schema": {"type": "integer", "minimum": 1, "maximum": 100, "default": 50}}
+        ],
+        "responses": {
+          "200": {"description": "候选人的目标岗位列表", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/PositionList"}}}},
+          "400": {"$ref": "#/components/responses/InvalidRequest"}
+        }
+      },
+      "post": {
+        "tags": ["Positions"],
+        "operationId": "createPosition",
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/CreatePositionRequest"}}}},
+        "responses": {
+          "201": {"description": "目标岗位已创建并生成准备题目", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/TargetPosition"}}}},
+          "400": {"$ref": "#/components/responses/InvalidRequest"},
+          "404": {"$ref": "#/components/responses/NotFound"}
+        }
+      }
+    },
+    "/positions/{position_id}": {
+      "parameters": [{"$ref": "#/components/parameters/PositionId"}],
+      "get": {
+        "tags": ["Positions"],
+        "operationId": "getPosition",
+        "responses": {
+          "200": {"description": "目标岗位详情和题库", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/TargetPosition"}}}},
+          "404": {"$ref": "#/components/responses/NotFound"}
+        }
+      },
+      "patch": {
+        "tags": ["Positions"],
+        "operationId": "updatePosition",
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/UpdatePositionRequest"}}}},
+        "responses": {
+          "200": {"description": "目标岗位已更新", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/TargetPosition"}}}},
+          "400": {"$ref": "#/components/responses/InvalidRequest"},
+          "404": {"$ref": "#/components/responses/NotFound"}
+        }
+      },
+      "delete": {
+        "tags": ["Positions"],
+        "operationId": "deletePosition",
+        "responses": {
+          "200": {"description": "目标岗位已删除", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/DeletePositionResponse"}}}},
+          "404": {"$ref": "#/components/responses/NotFound"}
+        }
+      }
+    },
+    "/positions/{position_id}/questions": {
+      "parameters": [{"$ref": "#/components/parameters/PositionId"}],
+      "post": {
+        "tags": ["Positions"],
+        "operationId": "regeneratePositionQuestions",
+        "responses": {
+          "200": {"description": "岗位题库已根据最新 JD 和关联项目重新生成", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/TargetPosition"}}}},
+          "404": {"$ref": "#/components/responses/NotFound"}
+        }
+      }
+    },
+    "/resumes": {
+      "get": {
+        "tags": ["Resumes"],
+        "operationId": "listResumes",
+        "parameters": [
+          {"name": "candidate_id", "in": "query", "required": false, "schema": {"type": "string", "minLength": 1, "default": "default"}},
+          {"name": "limit", "in": "query", "required": false, "schema": {"type": "integer", "minimum": 1, "maximum": 100, "default": 50}}
+        ],
+        "responses": {
+          "200": {"description": "候选人的简历库列表", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ResumeList"}}}},
+          "400": {"$ref": "#/components/responses/InvalidRequest"}
+        }
+      },
+      "post": {
+        "tags": ["Resumes"],
+        "operationId": "createResume",
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/CreateResumeRequest"}}}},
+        "responses": {
+          "201": {"description": "简历已创建并提取主张", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Resume"}}}},
+          "400": {"$ref": "#/components/responses/InvalidRequest"},
+          "404": {"$ref": "#/components/responses/NotFound"}
+        }
+      }
+    },
+    "/resumes/{resume_id}": {
+      "parameters": [{"$ref": "#/components/parameters/ResumeId"}],
+      "get": {
+        "tags": ["Resumes"],
+        "operationId": "getResume",
+        "responses": {
+          "200": {"description": "简历详情（含提取的主张）", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Resume"}}}},
+          "404": {"$ref": "#/components/responses/NotFound"}
+        }
+      },
+      "patch": {
+        "tags": ["Resumes"],
+        "operationId": "updateResume",
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/UpdateResumeRequest"}}}},
+        "responses": {
+          "200": {"description": "简历已更新", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Resume"}}}},
+          "400": {"$ref": "#/components/responses/InvalidRequest"},
+          "404": {"$ref": "#/components/responses/NotFound"}
+        }
+      },
+      "delete": {
+        "tags": ["Resumes"],
+        "operationId": "deleteResume",
+        "responses": {
+          "200": {"description": "简历已删除", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/DeleteResumeResponse"}}}},
+          "404": {"$ref": "#/components/responses/NotFound"}
+        }
+      }
+    },
+    "/sessions": {
+      "get": {
+        "tags": ["Sessions"],
+        "operationId": "listSessions",
+        "parameters": [
+          {"name": "candidate_id", "in": "query", "required": false, "schema": {"type": "string", "minLength": 1}},
+          {"name": "project_id", "in": "query", "required": false, "schema": {"type": "integer", "minimum": 1}},
+          {"name": "position_id", "in": "query", "required": false, "schema": {"type": "string", "minLength": 1}},
+          {"name": "limit", "in": "query", "required": false, "schema": {"type": "integer", "minimum": 1, "maximum": 100, "default": 50}}
+        ],
+        "responses": {
+          "200": {"description": "会话摘要列表", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/SessionList"}}}},
+          "400": {"$ref": "#/components/responses/InvalidRequest"}
+        }
+      },
+      "post": {
+        "tags": ["Sessions"],
+        "operationId": "createSession",
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/CreateSessionRequest"}}}},
+        "responses": {
+          "201": {"description": "面试或评审会话已创建", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/SessionResponse"}}}},
+          "400": {"$ref": "#/components/responses/InvalidRequest"},
+          "404": {"$ref": "#/components/responses/NotFound"}
+        }
+      }
+    },
+    "/sessions/{session_id}": {
+      "parameters": [{"$ref": "#/components/parameters/SessionId"}],
+      "get": {
+        "tags": ["Sessions"],
+        "operationId": "getSession",
+        "responses": {
+          "200": {"description": "当前会话状态", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/SessionResponse"}}}},
+          "400": {"$ref": "#/components/responses/InvalidRequest"},
+          "404": {"$ref": "#/components/responses/NotFound"},
+          "409": {"$ref": "#/components/responses/Conflict"}
+        }
+      },
+      "patch": {
+        "tags": ["Sessions"],
+        "operationId": "renameSession",
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/RenameSessionRequest"}}}},
+        "responses": {
+          "200": {"description": "会话标题已更新", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/SessionResponse"}}}},
+          "400": {"$ref": "#/components/responses/InvalidRequest"},
+          "404": {"$ref": "#/components/responses/NotFound"},
+          "409": {"$ref": "#/components/responses/Conflict"}
+        }
+      },
+      "delete": {
+        "tags": ["Sessions"],
+        "operationId": "deleteSession",
+        "responses": {
+          "200": {"description": "会话已删除", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/DeleteSessionResponse"}}}},
+          "404": {"$ref": "#/components/responses/NotFound"}
+        }
+      }
+    },
+    "/sessions/{session_id}/answers": {
+      "parameters": [{"$ref": "#/components/parameters/SessionId"}],
+      "post": {
+        "tags": ["Sessions"],
+        "operationId": "submitAnswer",
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/SubmitAnswerRequest"}}}},
+        "responses": {
+          "200": {"description": "回答已评价并生成下一问题", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/SessionResponse"}}}},
+          "400": {"$ref": "#/components/responses/InvalidRequest"},
+          "404": {"$ref": "#/components/responses/NotFound"},
+          "409": {"$ref": "#/components/responses/Conflict"},
+          "502": {"$ref": "#/components/responses/UpstreamError"}
+        }
+      }
+    },
+    "/sessions/{session_id}/answers/stream": {
+      "parameters": [{"$ref": "#/components/parameters/SessionId"}],
+      "post": {
+        "tags": ["Sessions"],
+        "operationId": "submitAnswerStream",
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/SubmitAnswerRequest"}}}},
+        "responses": {
+          "200": {"description": "回答评价和参考回答以 Server-Sent Events 流式返回", "content": {"text/event-stream": {"schema": {"type": "string"}}}},
+          "400": {"$ref": "#/components/responses/InvalidRequest"},
+          "404": {"$ref": "#/components/responses/NotFound"},
+          "409": {"$ref": "#/components/responses/Conflict"},
+          "502": {"$ref": "#/components/responses/UpstreamError"}
+        }
+      }
+    },
+    "/sessions/{session_id}/report": {
+      "parameters": [{"$ref": "#/components/parameters/SessionId"}],
+      "get": {
+        "tags": ["Sessions"],
+        "operationId": "getSessionReport",
+        "responses": {
+          "200": {"description": "会话复盘报告", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/SessionReport"}}}},
+          "404": {"$ref": "#/components/responses/NotFound"}
+        }
+      }
+    },
+    "/sessions/{session_id}/complete": {
+      "parameters": [{"$ref": "#/components/parameters/SessionId"}],
+      "post": {
+        "tags": ["Sessions"],
+        "operationId": "completeSession",
+        "responses": {
+          "200": {"description": "会话已结束；重复调用返回同一完成状态", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/SessionResponse"}}}},
+          "400": {"$ref": "#/components/responses/InvalidRequest"},
+          "404": {"$ref": "#/components/responses/NotFound"},
+          "409": {"$ref": "#/components/responses/Conflict"}
+        }
+      }
+    },
+    "/candidates/{candidate_id}/profile": {
+      "parameters": [{"$ref": "#/components/parameters/CandidateId"}],
+      "get": {
+        "tags": ["Candidates"],
+        "operationId": "getCandidateProfile",
+        "responses": {
+          "200": {"description": "候选人跨会话能力画像", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/CandidateProfile"}}}},
+          "404": {"$ref": "#/components/responses/NotFound"}
+        }
+      }
+    },
+    "/settings/llm": {
+      "get": {
+        "tags": ["LLM settings"],
+        "operationId": "getLLMSettings",
+        "responses": {"200": {"description": "当前生效配置（不包含 API Key）", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/LLMConfigPublic"}}}}}
+      },
+      "post": {
+        "tags": ["LLM settings"],
+        "operationId": "saveLLMSettings",
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/LLMConfigInput"}}}},
+        "responses": {
+          "200": {"description": "配置已保存并生效", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/LLMConfigPublic"}}}},
+          "400": {"$ref": "#/components/responses/InvalidRequest"}
+        }
+      }
+    },
+    "/settings/llm/models": {
+      "post": {
+        "tags": ["LLM settings"],
+        "operationId": "listLLMModels",
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/LLMConfigInput"}}}},
+        "responses": {
+          "200": {"description": "服务商模型列表", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ModelList"}}}},
+          "400": {"$ref": "#/components/responses/InvalidRequest"},
+          "502": {"$ref": "#/components/responses/UpstreamError"}
+        }
+      }
+    },
+    "/settings/llm/test": {
+      "post": {
+        "tags": ["LLM settings"],
+        "operationId": "testLLMSettings",
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/LLMConfigInput"}}}},
+        "responses": {
+          "200": {"description": "连接测试成功", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ConnectionTest"}}}},
+          "400": {"$ref": "#/components/responses/InvalidRequest"},
+          "502": {"$ref": "#/components/responses/UpstreamError"}
+        }
+      }
+    },
+    "/settings/llm/profiles": {
+      "get": {
+        "tags": ["LLM settings"],
+        "operationId": "listLLMProfiles",
+        "responses": {"200": {"description": "配置档案列表", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/LLMProfileList"}}}}}
+      },
+      "post": {
+        "tags": ["LLM settings"],
+        "operationId": "createLLMProfile",
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/LLMProfileInput"}}}},
+        "responses": {
+          "201": {"description": "配置档案已创建", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/LLMProfilePublic"}}}},
+          "400": {"$ref": "#/components/responses/InvalidRequest"}
+        }
+      }
+    },
+    "/settings/llm/profiles/{profile_id}": {
+      "parameters": [{"$ref": "#/components/parameters/ProfileId"}],
+      "put": {
+        "tags": ["LLM settings"],
+        "operationId": "updateLLMProfile",
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/LLMProfilePatch"}}}},
+        "responses": {
+          "200": {"description": "配置档案已更新", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/LLMProfilePublic"}}}},
+          "400": {"$ref": "#/components/responses/InvalidRequest"},
+          "404": {"$ref": "#/components/responses/NotFound"}
+        }
+      },
+      "delete": {
+        "tags": ["LLM settings"],
+        "operationId": "deleteLLMProfile",
+        "responses": {
+          "200": {"description": "配置档案已删除", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/LLMProfileList"}}}},
+          "404": {"$ref": "#/components/responses/NotFound"}
+        }
+      }
+    },
+    "/settings/llm/profiles/{profile_id}/activate": {
+      "parameters": [{"$ref": "#/components/parameters/ProfileId"}],
+      "post": {
+        "tags": ["LLM settings"],
+        "operationId": "activateLLMProfile",
+        "responses": {
+          "200": {"description": "配置档案已激活", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/LLMProfilePublic"}}}},
+          "404": {"$ref": "#/components/responses/NotFound"}
+        }
+      }
+    },
+    "/settings/llm/profiles/{profile_id}/test": {
+      "parameters": [{"$ref": "#/components/parameters/ProfileId"}],
+      "post": {
+        "tags": ["LLM settings"],
+        "operationId": "testLLMProfile",
+        "responses": {
+          "200": {"description": "已保存档案连接测试成功", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ConnectionTest"}}}},
+          "404": {"$ref": "#/components/responses/NotFound"},
+          "502": {"$ref": "#/components/responses/UpstreamError"}
+        }
+      }
+    }
+  },
+  "components": {
+    "parameters": {
+      "ProjectId": {"name": "project_id", "in": "path", "required": true, "schema": {"type": "integer", "minimum": 1}},
+      "PositionId": {"name": "position_id", "in": "path", "required": true, "schema": {"type": "string", "minLength": 1}},
+      "ResumeId": {"name": "resume_id", "in": "path", "required": true, "schema": {"type": "string", "minLength": 1}},
+      "SessionId": {"name": "session_id", "in": "path", "required": true, "schema": {"type": "string", "minLength": 1}},
+      "CandidateId": {"name": "candidate_id", "in": "path", "required": true, "schema": {"type": "string", "minLength": 1}},
+      "ProfileId": {"name": "profile_id", "in": "path", "required": true, "schema": {"type": "string", "minLength": 1}}
+    },
+    "responses": {
+      "InvalidRequest": {"description": "请求 JSON、字段或值无效", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ErrorResponse"}}}},
+      "NotFound": {"description": "路由或资源不存在", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ErrorResponse"}}}},
+      "Conflict": {"description": "会话或画像版本冲突，可以读取最新状态后重试", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ErrorResponse"}}}},
+      "UpstreamError": {"description": "远程大模型服务失败", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ErrorResponse"}}}}
+    },
+    "schemas": {
+      "Health": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["status", "service", "api_version"],
+        "properties": {
+          "status": {"const": "ok"},
+          "service": {"const": "interview-agent"},
+          "api_version": {"const": "1"}
+        }
+      },
+      "ErrorResponse": {
+        "type": "object",
+        "required": ["error", "code", "retryable", "request_id"],
+        "properties": {
+          "error": {"type": "string", "description": "兼容旧客户端的可读消息"},
+          "code": {"type": "string", "description": "供客户端分支处理的稳定错误码"},
+          "retryable": {"type": "boolean"},
+          "request_id": {"type": "string", "minLength": 1}
+        }
+      },
+      "Topic": {
+        "type": "object",
+        "required": ["name", "score"],
+        "properties": {
+          "name": {"type": "string", "minLength": 1},
+          "score": {"type": "integer", "minimum": 0, "maximum": 100},
+          "evidence": {"type": "array", "items": {"type": "string"}, "default": []}
+        }
+      },
+      "ProjectKnowledge": {
+        "type": "object",
+        "required": ["project_id", "project_name", "topics"],
+        "properties": {
+          "project_id": {"type": "integer", "minimum": 1},
+          "project_name": {"type": "string"},
+          "topics": {"type": "array", "items": {"$ref": "#/components/schemas/Topic"}},
+          "components": {"type": "object", "additionalProperties": true, "default": {}},
+          "evidence": {"type": "object", "additionalProperties": true, "default": {}},
+          "dependencies": {"type": "object", "additionalProperties": {"type": "array", "items": {"type": "string"}}, "default": {}},
+          "weaknesses": {"type": "array", "items": {"type": "string"}, "default": []}
+        }
+      },
+      "FolderFile": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["path", "content"],
+        "properties": {"path": {"type": "string", "minLength": 1}, "content": {"type": "string"}}
+      },
+      "FolderSource": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["type", "files"],
+        "properties": {
+          "type": {"const": "folder"},
+          "files": {"type": "array", "minItems": 1, "maxItems": 10000, "items": {"$ref": "#/components/schemas/FolderFile"}}
+        }
+      },
+      "ZipSource": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["type", "source_path"],
+        "properties": {
+          "type": {"const": "zip"},
+          "source_path": {"type": "string", "minLength": 1},
+          "max_total_size": {"type": "integer", "minimum": 0, "maximum": 104857600},
+          "max_file_size": {"type": "integer", "minimum": 0, "maximum": 10485760},
+          "max_files": {"type": "integer", "minimum": 0, "maximum": 10000}
+        }
+      },
+      "ProjectUploadRequest": {
+        "type": "object",
+        "required": ["project_id", "source"],
+        "properties": {
+          "project_id": {"type": "integer", "minimum": 1},
+          "project_name": {"type": "string"},
+          "source": {"oneOf": [{"$ref": "#/components/schemas/FolderSource"}, {"$ref": "#/components/schemas/ZipSource"}]}
+        }
+      },
+      "ProjectAnalysis": {
+        "type": "object",
+        "required": ["project_id", "project_name", "source_type", "workspace_path", "analysis_status", "schema_version", "analyzer_id", "error"],
+        "properties": {
+          "project_id": {"type": "integer", "minimum": 1},
+          "project_name": {"type": "string"},
+          "source_type": {"type": "string"},
+          "workspace_path": {"type": "string"},
+          "analysis_status": {"enum": ["CREATED", "SOURCE_READY", "SCANNING", "ANALYZING", "READY", "FAILED"]},
+          "schema_version": {"type": "integer", "minimum": 1},
+          "analyzer_id": {"type": "string"},
+          "universal_model": {"type": ["object", "null"], "additionalProperties": true},
+          "knowledge": {"oneOf": [{"$ref": "#/components/schemas/ProjectKnowledge"}, {"type": "null"}]},
+          "error": {"type": "string"}
+        }
+      },
+      "ProjectAnalysisError": {
+        "oneOf": [
+          {"allOf": [{"$ref": "#/components/schemas/ProjectAnalysis"}, {"$ref": "#/components/schemas/ErrorResponse"}]},
+          {"$ref": "#/components/schemas/ErrorResponse"}
+        ]
+      },
+      "PositionStatus": {"enum": ["preparing", "applied", "interviewing", "archived"]},
+      "PositionQuestion": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["question_id", "text", "requirement", "category", "difficulty", "project_id", "evidence_ids"],
+        "properties": {
+          "question_id": {"type": "string", "minLength": 1},
+          "text": {"type": "string", "minLength": 1},
+          "requirement": {"type": "string", "minLength": 1},
+          "category": {"enum": ["project_evidence", "experience"]},
+          "difficulty": {"type": "integer", "minimum": 1, "maximum": 4},
+          "project_id": {"type": ["integer", "null"], "minimum": 1},
+          "evidence_ids": {"type": "array", "items": {"type": "string"}}
+        }
+      },
+      "TargetPosition": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["position_id", "candidate_id", "title", "company", "jd_text", "source_url", "status", "project_ids", "requirements", "questions", "created_at", "updated_at", "schema_version"],
+        "properties": {
+          "position_id": {"type": "string", "minLength": 1},
+          "candidate_id": {"type": "string", "minLength": 1},
+          "title": {"type": "string", "minLength": 1, "maxLength": 120},
+          "company": {"type": "string", "maxLength": 120},
+          "jd_text": {"type": "string", "minLength": 1, "maxLength": 100000},
+          "source_url": {"type": "string", "maxLength": 2000},
+          "status": {"$ref": "#/components/schemas/PositionStatus"},
+          "project_ids": {"type": "array", "maxItems": 20, "items": {"type": "integer", "minimum": 1}},
+          "requirements": {"type": "array", "items": {"type": "string"}},
+          "questions": {"type": "array", "items": {"$ref": "#/components/schemas/PositionQuestion"}},
+          "created_at": {"type": "string"},
+          "updated_at": {"type": "string"},
+          "schema_version": {"const": 1}
+        }
+      },
+      "PositionList": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["positions", "count"],
+        "properties": {
+          "positions": {"type": "array", "items": {"$ref": "#/components/schemas/TargetPosition"}},
+          "count": {"type": "integer", "minimum": 0}
+        }
+      },
+      "CreatePositionRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["title", "jd_text"],
+        "properties": {
+          "candidate_id": {"type": "string", "minLength": 1, "default": "default"},
+          "title": {"type": "string", "minLength": 1, "maxLength": 120},
+          "company": {"type": "string", "maxLength": 120},
+          "jd_text": {"type": "string", "minLength": 1, "maxLength": 100000},
+          "source_url": {"type": "string", "maxLength": 2000},
+          "status": {"$ref": "#/components/schemas/PositionStatus"},
+          "project_ids": {"type": "array", "maxItems": 20, "items": {"type": "integer", "minimum": 1}}
+        }
+      },
+      "UpdatePositionRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "minProperties": 1,
+        "properties": {
+          "title": {"type": "string", "minLength": 1, "maxLength": 120},
+          "company": {"type": "string", "maxLength": 120},
+          "jd_text": {"type": "string", "minLength": 1, "maxLength": 100000},
+          "source_url": {"type": "string", "maxLength": 2000},
+          "status": {"$ref": "#/components/schemas/PositionStatus"},
+          "project_ids": {"type": "array", "maxItems": 20, "items": {"type": "integer", "minimum": 1}}
+        }
+      },
+      "DeletePositionResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["position_id", "deleted"],
+        "properties": {
+          "position_id": {"type": "string"},
+          "deleted": {"const": true}
+        }
+      },
+      "ResumeStatus": {"enum": ["pending", "analyzing", "extracted"]},
+      "ResumeClaim": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["claim_id", "text", "source", "skip"],
+        "properties": {
+          "claim_id": {"type": "string", "minLength": 1},
+          "text": {"type": "string", "minLength": 1, "maxLength": 240},
+          "source": {"type": "string"},
+          "skip": {"type": "boolean"}
+        }
+      },
+      "Resume": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["resume_id", "candidate_id", "name", "role", "domain", "resume_text", "status", "claims", "project_ids", "created_at", "updated_at", "schema_version"],
+        "properties": {
+          "resume_id": {"type": "string", "minLength": 1},
+          "candidate_id": {"type": "string", "minLength": 1},
+          "name": {"type": "string", "minLength": 1, "maxLength": 64},
+          "role": {"type": "string", "maxLength": 64},
+          "domain": {"type": "string", "maxLength": 64},
+          "resume_text": {"type": "string", "minLength": 1, "maxLength": 100000},
+          "status": {"$ref": "#/components/schemas/ResumeStatus"},
+          "claims": {"type": "array", "items": {"$ref": "#/components/schemas/ResumeClaim"}},
+          "project_ids": {"type": "array", "maxItems": 20, "items": {"type": "integer", "minimum": 1}},
+          "created_at": {"type": "string"},
+          "updated_at": {"type": "string"},
+          "schema_version": {"const": 1}
+        }
+      },
+      "ResumeSummary": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["resume_id", "candidate_id", "name", "role", "domain", "status", "claims_count", "project_ids", "project_names", "created_at", "updated_at"],
+        "properties": {
+          "resume_id": {"type": "string", "minLength": 1},
+          "candidate_id": {"type": "string", "minLength": 1},
+          "name": {"type": "string", "minLength": 1, "maxLength": 64},
+          "role": {"type": "string", "maxLength": 64},
+          "domain": {"type": "string", "maxLength": 64},
+          "status": {"$ref": "#/components/schemas/ResumeStatus"},
+          "claims_count": {"type": "integer", "minimum": 0},
+          "project_ids": {"type": "array", "items": {"type": "integer", "minimum": 1}},
+          "project_names": {"type": "array", "items": {"type": "string"}},
+          "created_at": {"type": "string"},
+          "updated_at": {"type": "string"}
+        }
+      },
+      "ResumeList": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["resumes", "count"],
+        "properties": {
+          "resumes": {"type": "array", "items": {"$ref": "#/components/schemas/ResumeSummary"}},
+          "count": {"type": "integer", "minimum": 0}
+        }
+      },
+      "CreateResumeRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["resume_text"],
+        "properties": {
+          "candidate_id": {"type": "string", "minLength": 1, "default": "default"},
+          "name": {"type": "string", "minLength": 1, "maxLength": 64},
+          "role": {"type": "string", "maxLength": 64},
+          "domain": {"type": "string", "maxLength": 64},
+          "resume_text": {"type": "string", "minLength": 1, "maxLength": 100000},
+          "project_ids": {"type": "array", "maxItems": 20, "items": {"type": "integer", "minimum": 1}}
+        }
+      },
+      "UpdateResumeRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "minProperties": 1,
+        "properties": {
+          "role": {"type": "string", "maxLength": 64},
+          "domain": {"type": "string", "maxLength": 64},
+          "status": {"$ref": "#/components/schemas/ResumeStatus"},
+          "project_ids": {"type": "array", "maxItems": 20, "items": {"type": "integer", "minimum": 1}},
+          "claims": {"type": "array", "items": {"$ref": "#/components/schemas/ResumeClaimPatch"}}
+        }
+      },
+      "ResumeClaimPatch": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["claim_id"],
+        "properties": {
+          "claim_id": {"type": "string", "minLength": 1},
+          "skip": {"type": "boolean", "default": false}
+        }
+      },
+      "DeleteResumeResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["resume_id", "deleted"],
+        "properties": {
+          "resume_id": {"type": "string"},
+          "deleted": {"const": true}
+        }
+      },
+      "ReviewMode": {"enum": ["technical_interview", "portfolio_review", "defense_review"]},
+      "CreateSessionRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["project_id"],
+        "properties": {
+          "project_id": {"type": "integer", "minimum": 1},
+          "candidate_id": {"type": "string", "minLength": 1, "default": "default"},
+          "review_mode": {"$ref": "#/components/schemas/ReviewMode"},
+          "title": {"type": "string", "minLength": 1, "maxLength": 80},
+          "topic": {"type": "string", "minLength": 1, "description": "可选的新会话首题主题，必须匹配当前项目主题"},
+          "position_id": {"type": "string", "minLength": 1},
+          "position_question_id": {"type": "string", "minLength": 1, "description": "与 position_id 一起传入，从岗位题库指定首题"}
+        }
+      },
+      "RenameSessionRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["title"],
+        "properties": {
+          "title": {"type": "string", "minLength": 1, "maxLength": 80}
+        }
+      },
+      "DeleteSessionResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["session_id", "deleted"],
+        "properties": {
+          "session_id": {"type": "string"},
+          "deleted": {"const": true}
+        }
+      },
+      "SubmitAnswerRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["answer"],
+        "properties": {
+          "answer": {"type": "string", "minLength": 1},
+          "candidate_id": {"type": "string", "minLength": 1, "description": "传入时必须与会话所有者一致"}
+        }
+      },
+      "Evaluation": {
+        "type": ["object", "null"],
+        "properties": {
+          "score": {"type": "integer", "minimum": 0, "maximum": 100},
+          "strengths": {"type": "array", "items": {"type": "string"}},
+          "weaknesses": {"type": "array", "items": {"type": "string"}},
+          "feedback": {"type": "string"},
+          "reference_answer": {"type": "string", "description": "回答未达到 100 分时由后端生成的项目证据参考回答"},
+          "evidence_ids": {"type": "array", "items": {"type": "string"}},
+          "covered_points": {"type": "array", "items": {"type": "string"}},
+          "missing_points": {"type": "array", "items": {"type": "string"}}
+        }
+      },
+      "InterviewState": {
+        "type": "object",
+        "required": ["project_id", "current_topic", "level", "question", "status", "candidate_id", "review_mode", "completed_at"],
+        "properties": {
+          "project_id": {"type": "integer"},
+          "project": {"$ref": "#/components/schemas/ProjectKnowledge"},
+          "current_topic": {"$ref": "#/components/schemas/Topic"},
+          "level": {"type": "integer", "minimum": 1},
+          "question": {"type": "string"},
+          "title": {"type": "string"},
+          "answer": {"type": "string"},
+          "evaluation": {"$ref": "#/components/schemas/Evaluation"},
+          "next_direction": {"type": "string"},
+          "history": {"type": "array", "items": {"type": "object", "additionalProperties": true}},
+          "status": {"type": "string"},
+          "question_evidence_ids": {"type": "array", "items": {"type": "string"}},
+          "question_covered_points": {"type": "array", "items": {"type": "string"}},
+          "question_missing_points": {"type": "array", "items": {"type": "string"}},
+          "candidate_id": {"type": "string"},
+          "last_submitted_question": {"type": "string"},
+          "last_submitted_answer": {"type": "string"},
+          "review_mode": {"$ref": "#/components/schemas/ReviewMode"},
+          "completed_at": {"type": "string", "description": "会话未结束时为空字符串"},
+          "position_id": {"type": "string"},
+          "position_question_id": {"type": "string"}
+        }
+      },
+      "SessionResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["session_id", "state"],
+        "properties": {
+          "session_id": {"type": "string"},
+          "state": {"$ref": "#/components/schemas/InterviewState"}
+        }
+      },
+      "SessionSummary": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["session_id", "title", "project_id", "project_name", "candidate_id", "review_mode", "status", "current_topic", "question", "question_count", "average_score", "next_direction", "updated_at", "completed_at"],
+        "properties": {
+          "session_id": {"type": "string"},
+          "title": {"type": "string"},
+          "project_id": {"type": "integer", "minimum": 1},
+          "project_name": {"type": "string"},
+          "candidate_id": {"type": "string"},
+          "review_mode": {"$ref": "#/components/schemas/ReviewMode"},
+          "status": {"type": "string"},
+          "current_topic": {"type": "string"},
+          "question": {"type": "string"},
+          "question_count": {"type": "integer", "minimum": 0},
+          "average_score": {"type": ["integer", "null"], "minimum": 0, "maximum": 100},
+          "next_direction": {"type": "string"},
+          "updated_at": {"type": "string"},
+          "completed_at": {"type": "string"},
+          "position_id": {"type": "string"},
+          "position_question_id": {"type": "string"}
+        }
+      },
+      "SessionList": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["sessions", "count"],
+        "properties": {
+          "sessions": {"type": "array", "items": {"$ref": "#/components/schemas/SessionSummary"}},
+          "count": {"type": "integer", "minimum": 0}
+        }
+      },
+      "SessionReportRecord": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["question", "answer", "topic", "level", "evaluation"],
+        "properties": {
+          "question": {"type": "string"},
+          "answer": {"type": "string"},
+          "topic": {"type": "string"},
+          "level": {"type": "integer", "minimum": 1},
+          "evaluation": {"$ref": "#/components/schemas/Evaluation"}
+        }
+      },
+      "SessionReport": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["session_id", "project_id", "project_name", "candidate_id", "review_mode", "status", "completed_at", "question_count", "average_score", "strengths", "weaknesses", "evidence_ids", "topics", "records", "next_direction"],
+        "properties": {
+          "session_id": {"type": "string"},
+          "project_id": {"type": "integer"},
+          "project_name": {"type": "string"},
+          "candidate_id": {"type": "string"},
+          "review_mode": {"$ref": "#/components/schemas/ReviewMode"},
+          "status": {"type": "string"},
+          "completed_at": {"type": "string"},
+          "question_count": {"type": "integer", "minimum": 0},
+          "average_score": {"type": ["integer", "null"], "minimum": 0, "maximum": 100},
+          "strengths": {"type": "array", "items": {"type": "string"}},
+          "weaknesses": {"type": "array", "items": {"type": "string"}},
+          "evidence_ids": {"type": "array", "items": {"type": "string"}},
+          "topics": {"type": "array", "items": {"type": "object", "additionalProperties": false, "required": ["name", "count", "average_score"], "properties": {"name": {"type": "string"}, "count": {"type": "integer", "minimum": 1}, "average_score": {"type": "integer", "minimum": 0, "maximum": 100}}}},
+          "records": {"type": "array", "items": {"$ref": "#/components/schemas/SessionReportRecord"}},
+          "next_direction": {"type": "string"}
+        }
+      },
+      "WeaknessSource": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["weakness", "session_id", "project_id", "record_index", "question", "evidence_ids"],
+        "properties": {
+          "weakness": {"type": "string"},
+          "session_id": {"type": "string"},
+          "project_id": {"type": "integer"},
+          "record_index": {"type": "integer", "minimum": 0},
+          "question": {"type": "string"},
+          "evidence_ids": {"type": "array", "items": {"type": "string"}}
+        }
+      },
+      "CandidateSkill": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["score", "trend", "recent_score", "sample_count", "weaknesses", "weakness_sources"],
+        "properties": {
+          "score": {"type": "integer", "minimum": 0, "maximum": 100},
+          "trend": {"enum": ["new", "improving", "stable", "declining"]},
+          "recent_score": {"type": ["integer", "null"], "minimum": 0, "maximum": 100},
+          "sample_count": {"type": "integer", "minimum": 1},
+          "weaknesses": {"type": "array", "items": {"type": "string"}},
+          "weakness_sources": {"type": "array", "items": {"$ref": "#/components/schemas/WeaknessSource"}}
+        }
+      },
+      "CandidateProfile": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["candidate_id", "schema_version", "version", "skills"],
+        "properties": {
+          "candidate_id": {"type": "string"},
+          "schema_version": {"type": "integer", "minimum": 1},
+          "version": {"type": "integer", "minimum": 0},
+          "skills": {"type": "object", "additionalProperties": {"$ref": "#/components/schemas/CandidateSkill"}}
+        }
+      },
+      "LLMConfigInput": {
+        "type": "object",
+        "properties": {
+          "provider": {"enum": ["rule_based", "openai_compatible"], "default": "rule_based"},
+          "provider_name": {"type": "string", "default": "custom"},
+          "base_url": {"type": "string"},
+          "api_key": {"type": "string", "writeOnly": true},
+          "model": {"type": "string"},
+          "api_mode": {"const": "chat_completions"},
+          "timeout": {"type": "number", "exclusiveMinimum": 0, "default": 60},
+          "temperature": {"type": "number", "minimum": 0, "default": 0.2}
+        }
+      },
+      "LLMConfigPublic": {
+        "type": "object",
+        "required": ["provider", "provider_name", "base_url", "model", "api_mode", "timeout", "temperature", "configured", "api_key_set"],
+        "properties": {
+          "provider": {"type": "string"},
+          "provider_name": {"type": "string"},
+          "base_url": {"type": "string"},
+          "model": {"type": "string"},
+          "api_mode": {"type": "string"},
+          "timeout": {"type": "number"},
+          "temperature": {"type": "number"},
+          "configured": {"type": "boolean"},
+          "api_key_set": {"type": "boolean"}
+        }
+      },
+      "LLMProfileInput": {
+        "allOf": [{"$ref": "#/components/schemas/LLMConfigInput"}, {"type": "object", "required": ["name"], "properties": {"name": {"type": "string", "minLength": 1}}}]
+      },
+      "LLMProfilePatch": {
+        "allOf": [{"$ref": "#/components/schemas/LLMConfigInput"}, {"type": "object", "properties": {"name": {"type": "string", "minLength": 1}}}]
+      },
+      "LLMProfilePublic": {
+        "allOf": [{"$ref": "#/components/schemas/LLMConfigPublic"}, {"type": "object", "required": ["id", "name", "active"], "properties": {"id": {"type": "string"}, "name": {"type": "string"}, "active": {"type": "boolean"}}}]
+      },
+      "LLMProfileList": {
+        "type": "object",
+        "required": ["active_id", "profiles"],
+        "properties": {
+          "active_id": {"type": ["string", "null"]},
+          "profiles": {"type": "array", "items": {"$ref": "#/components/schemas/LLMProfilePublic"}}
+        }
+      },
+      "ModelList": {
+        "type": "object",
+        "required": ["provider_name", "models"],
+        "properties": {"provider_name": {"type": "string"}, "models": {"type": "array", "items": {"type": "string"}}}
+      },
+      "ConnectionTest": {
+        "type": "object",
+        "required": ["ok", "message", "profile_id"],
+        "properties": {"ok": {"type": "boolean"}, "message": {"type": "string"}, "profile_id": {"type": ["string", "null"]}}
+      }
+    }
+  }
+}
