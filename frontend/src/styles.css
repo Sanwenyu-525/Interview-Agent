@@ -2296,14 +2296,14 @@ pre,
   transform: translateX(-50%);
 }
 .resume-list-copy { display: grid; gap: 3px; min-width: 0; }
-.resume-list-copy strong { color: var(--ink); font-size: 10px; font-weight: 600; }
+.resume-list-copy strong { color: var(--ink); font-size: 12px; font-weight: 600; }
 .resume-list-copy small {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 4px;
   color: var(--muted);
-  font-size: 8px;
+  font-size: 10px;
 }
 .resume-list-item.is-active .resume-list-copy strong { color: #8a4a14; }
 .resume-list-state {

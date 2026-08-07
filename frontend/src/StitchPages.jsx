@@ -1066,7 +1066,9 @@ export function ResumeLibraryView() {
       .some((field) => field.toLowerCase().includes(needle));
   });
 
-  function handleDragStart(index) {
+  function handleDragStart(event, index) {
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData("text/plain", String(index));
     setDragIndex(index);
   }
 
@@ -1142,7 +1144,7 @@ export function ResumeLibraryView() {
                 className={`resume-list-item ${selectedId === resume.id ? "is-active" : ""} ${dragIndex === index ? "is-dragging" : ""} ${overIndex === index && dragIndex !== null && dragIndex !== index ? "is-drop-target" : ""}`}
                 key={resume.id}
                 draggable={!query}
-                onDragStart={() => handleDragStart(index)}
+                onDragStart={(event) => handleDragStart(event, index)}
                 onDragOver={(event) => handleDragOver(event, index)}
                 onDragLeave={() => { if (overIndex === index) setOverIndex(null); }}
                 onDrop={handleDrop}
@@ -1227,7 +1229,7 @@ function ResumePdfPreview({ data }) {
     setStatus("正在加载 PDF…");
     (async () => {
       try {
-        const pdf = await pdfjsLib.getDocument({ data }).promise;
+        const pdf = await pdfjsLib.getDocument({ data: data.slice(0) }).promise;
         if (cancelled) return;
         for (let index = 1; index <= pdf.numPages; index += 1) {
           const page = await pdf.getPage(index);
