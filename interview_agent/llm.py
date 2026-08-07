@@ -39,7 +39,7 @@ class LLMConfig:
     model: str
     api_mode: str = "chat_completions"
     timeout: float = 60.0
-    temperature: float = 0.2
+    temperature: float = 0.7
     provider: str = "openai_compatible"
     provider_name: str = "custom"
 
@@ -264,15 +264,13 @@ def _history_payload(history) -> list[dict[str, str]]:
     ]
 
 
-def _mentions_code_detail(question: str, project: ProjectKnowledge) -> bool:
+def _mentions_evidence_location(question: str) -> bool:
+    """问题直接暴露证据位置（文件路径、源码后缀或行号）时视为不合格。"""
     normalized = question.casefold()
     if re.search(r"\b[^\s/\\]+\.(?:java|py|js|jsx|ts|tsx|go|rs|cs|cpp|c|h)\b", normalized):
         return True
-    if re.search(r"\b[a-z_$][\w$]{2,}\s*(?:方法|函数|类|文件|第\s*\d+\s*行)", question, re.IGNORECASE):
-        return True
-    return any(
-        len(str(component)) >= 3 and str(component).casefold() in normalized
-        for component in project.components
+    return bool(
+        re.search(r"(?:src[\\/]|[\\/]\w+\.(?:java|py|js|go|rs|cs)|文件|第\s*\d+\s*行)", question, re.IGNORECASE)
     )
 
 
@@ -327,13 +325,13 @@ class LlmQuestionGenerator:
             "当前证据": selected_evidence,
             "可引用证据 ID": list(selected_ids),
             "历史回答": _history_payload(history),
-            "问题层级约束": {
-                "level_1": "只问系统级大方向：目标、边界、参与方、协作方式和总体方案",
-                "level_2": "围绕一条核心流程追问职责划分、数据流转和异常处理",
-                "level_3": "讨论边界条件、方案权衡和验证方式",
-                "level_4": "讨论容量、稳定性和架构演进",
-                "禁止": "不得询问类名、函数名、文件路径、注解或逐行代码",
-                "证据用途": "代码证据只用于保证问题来自真实项目，不要把证据位置写进问题",
+            "提问建议": {
+                "level_1": "优先系统级大方向：目标、边界、参与方和整体协作方案",
+                "level_2": "优先围绕一条核心流程追问职责划分、数据流转和异常处理",
+                "level_3": "优先讨论边界条件、方案权衡和验证方式",
+                "level_4": "优先讨论容量、稳定性和架构演进",
+                "自由度": "可以像真人面试官一样自然追问实现细节，允许涉及具体类、方法如何协作，不要因此换成模板",
+                "禁止": "不得把证据的文件路径、行号或源代码片段写进问题；问题应当让不掌握项目目录的人也能回答",
             },
             "输出格式": {
                 "question": "字符串",
@@ -363,7 +361,7 @@ class LlmQuestionGenerator:
                 evidence_ids=selected_ids,
                 covered_points=(topic.name,),
             )
-        if _mentions_code_detail(question, project):
+        if _mentions_evidence_location(question):
             question = RuleBasedQuestionGenerator().generate(
                 topic=topic,
                 project=project,

@@ -142,8 +142,8 @@ class LLMTests(unittest.TestCase):
         sent_messages = client._llm.calls[0][0]
         user_content = sent_messages[1].content
         self.assertIn("项目知识", user_content)
-        self.assertIn("问题层级约束", user_content)
-        self.assertIn("不得询问类名、函数名、文件路径", user_content)
+        self.assertIn("提问建议", user_content)
+        self.assertIn("不得把证据的文件路径", user_content)
 
     def test_project_payload_omits_full_evidence_dump(self):
         client = client_with(
@@ -212,6 +212,36 @@ class LLMTests(unittest.TestCase):
         self.assertNotIn("OrderService", result.question)
         self.assertNotIn(".java", result.question)
         self.assertIn("关键状态和数据", result.question)
+
+    def test_question_generator_keeps_class_and_method_names(self):
+        client = client_with(
+            [
+                json.dumps(
+                    {
+                        "question": "OrderService 的 createOrder 方法在事务失败时如何保证订单一致？",
+                        "evidence_ids": ["e1"],
+                        "covered_points": [],
+                        "missing_points": [],
+                    },
+                    ensure_ascii=False,
+                )
+            ]
+        )
+        generator = LlmQuestionGenerator(client)
+
+        result = generator.generate(
+            topic=sample_project().topics[0],
+            project=sample_project(),
+            level=2,
+            history=[],
+            evidence=({"id": "e1", "source_path": "src/OrderService.java"},),
+            evidence_ids=("e1",),
+        )
+
+        self.assertEqual(
+            result.question,
+            "OrderService 的 createOrder 方法在事务失败时如何保证订单一致？",
+        )
 
     def test_question_generator_falls_back_when_response_omits_question(self):
         client = client_with([json.dumps({"evidence_ids": ["e1"]}, ensure_ascii=False)])
