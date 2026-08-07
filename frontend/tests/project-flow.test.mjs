@@ -46,8 +46,8 @@ test("workspace supports multiple persisted agent tasks", () => {
   assert.match(app, /saveStoredTasks/);
   assert.match(app, /getSession\(task\.id\)/);
   assert.match(app, /startInterviewSession\(projectId, candidateId\)/);
-  assert.match(app, /工作区任务/);
-  assert.match(app, /新建任务/);
+  assert.match(pages, /最近会话/);
+  assert.match(pages, /新建复盘/);
   assert.match(app, /选择文件夹作为工作区/);
 });
 
@@ -140,9 +140,9 @@ test("session UI mapping uses project state and evidence ids", () => {
 });
 
 test("empty knowledge, evidence, and evaluation states are explicit", () => {
-  assert.match(app, /没有可展示的项目知识|暂无项目知识|没有项目知识/);
-  assert.match(app, /没有可展示的证据|暂无证据|没有证据/);
-  assert.match(app, /尚未评价|暂无评价|没有评价/);
+  assert.match(pages, /暂无项目知识/);
+  assert.match(app, /暂无证据/);
+  assert.match(app, /暂无评价/);
   assert.match(app, /bootError/);
 });
 
@@ -202,8 +202,8 @@ test("interview header and structure controls expose real interactions", () => {
   assert.match(app, /const \[isMoreMenuOpen, setIsMoreMenuOpen\] = useState\(false\)/);
   assert.match(app, /aria-expanded=\{isMoreMenuOpen\}/);
   assert.match(app, /className="more-menu"/);
-  assert.match(app, /onClick=\{\(\) => handleStructureSelection\(child\)\}/);
-  assert.match(app, /selectedStructureItem === child/);
+  assert.match(app, /onSelectStructure=\{handleStructureSelection\}/);
+  assert.match(app, /selectedItem=\{selectedStructureItem\}/);
 });
 
 test("selecting another topic creates a new session for that topic", () => {
@@ -264,7 +264,7 @@ test("project upload exposes two explicit processing modes", () => {
 
 test("upload mode is visible in submit and progress feedback", () => {
   const modeIndex = app.indexOf("upload-mode-switch");
-  const candidateIndex = app.indexOf("候选人 ID");
+  const candidateIndex = app.indexOf("面试者 ID");
   const submitIndex = app.indexOf("attachment-submit");
   assert.ok(modeIndex >= 0);
   assert.ok(candidateIndex > modeIndex);

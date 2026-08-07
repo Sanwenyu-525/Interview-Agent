@@ -5,11 +5,45 @@ import {
   MAX_FILE_TEXT_BYTES,
   MAX_TOTAL_TEXT_BYTES,
   MAX_UPLOAD_FILES,
+  createDirectoryUploadDescriptor,
   createFolderUploadDescriptor,
+  folderNameFromPath,
   generateProjectId,
   normalizeProjectId,
   relativeUploadPath,
 } from "../src/upload.js";
+
+test("createDirectoryUploadDescriptor builds a directory source descriptor", () => {
+  const descriptor = createDirectoryUploadDescriptor("C:\\projects\\demo", {
+    projectId: 26,
+  });
+
+  assert.equal(descriptor.project_id, 26);
+  assert.equal(descriptor.project_name, "demo");
+  assert.deepEqual(descriptor.source, {
+    type: "directory",
+    source_path: "C:\\projects\\demo",
+  });
+});
+
+test("createDirectoryUploadDescriptor falls back to an explicit project name", () => {
+  const descriptor = createDirectoryUploadDescriptor("/tmp/demo", {
+    projectId: 26,
+    projectName: "订单服务",
+  });
+
+  assert.equal(descriptor.project_name, "订单服务");
+});
+
+test("createDirectoryUploadDescriptor rejects empty or invalid input", () => {
+  assert.throws(() => createDirectoryUploadDescriptor("", { projectId: 26 }), /目录/);
+  assert.throws(() => createDirectoryUploadDescriptor("C:\\demo", { projectId: 0 }), /正整数/);
+});
+
+test("folderNameFromPath returns the last path segment", () => {
+  assert.equal(folderNameFromPath("C:\\projects\\demo"), "demo");
+  assert.equal(folderNameFromPath("/tmp/order-service/"), "order-service");
+});
 
 test("relativeUploadPath removes the selected folder root", () => {
   assert.equal(

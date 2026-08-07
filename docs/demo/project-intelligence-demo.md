@@ -211,7 +211,7 @@ Invoke-RestMethod `
 - 路径安全检查会拒绝 Zip Slip、绝对路径、符号链接、重复/冲突成员和 Workspace 外写入。服务端 ZIP descriptor 默认限制单文件解压大小 `10 MiB`、总解压大小 `100 MiB`、文件数 `10000`；`max_total_size`、`max_file_size`、`max_files` 可选但只能传非负整数且不能超过这些上限。直接调用 `ZipSource` 的显式限制行为保持不变。
 - `technical_interview`、`portfolio_review` 和 `defense_review` 均已实现主题选择与分数驱动的追问方向，并共享同一项目证据和会话流程。
 - 评分方向是确定性本地规则：低于 60 为 `basic`，60–79 为 `deep`，80 及以上为 `architecture`。真实 LLM、RAG、LangGraph 和向量检索尚未接入。
-- SQLite 当前项目分析 schema version 为 `1`，候选人画像 payload version 为 `1`；读取会校验版本和项目 ID，旧的基础 `ProjectKnowledge` 记录保留兼容读取能力。
+- SQLite 当前项目分析 schema version 为 `1`，面试者画像 payload version 为 `1`；读取会校验版本和项目 ID，旧的基础 `ProjectKnowledge` 记录保留兼容读取能力。
 
 这些限制是当前 MVP 的实际边界，不应在 UI 或文档中包装成已经完成的能力。未来增加视频/设计 Analyzer 或 Portfolio/Defense Policy 时，仍应保持证据、可序列化和可回溯的接口。
 ## 6. 前端目录上传入口
@@ -229,6 +229,6 @@ Invoke-RestMethod `
 }
 ```
 
-上传成功后，前端按 `status → knowledge → startInterviewSession` 的顺序确认分析结果并自动进入面试，项目分析结果回到 Agent 聊天流；候选人 ID 默认是 `VITE_CANDIDATE_ID` 或 `default`。生成的数字 `project_id` 保存在浏览器 `localStorage`，刷新后可以恢复最近上传的项目。浏览器入口支持最多 10000 个文件、单文件 10MB、总文本量 100MB。
+上传成功后，前端按 `status → knowledge → startInterviewSession` 的顺序确认分析结果并自动进入面试，项目分析结果回到 Agent 聊天流；面试者 ID 默认是 `VITE_CANDIDATE_ID` 或 `default`。生成的数字 `project_id` 保存在浏览器 `localStorage`，刷新后可以恢复最近上传的项目。浏览器入口支持最多 10000 个文件、单文件 10MB、总文本量 100MB。
 
 本浏览器入口只实现目录 Folder JSON 上传。ZIP、multipart 和二进制文件上传仍不支持；本文第 4 节的 `ZipSource` 仅是后端服务进程可访问本地 ZIP 时的独立 API 示例，不代表前端目录选择器支持 ZIP。

@@ -1,13 +1,17 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import usePanelResize from "./usePanelResize.js";
 import {
   ArrowRight,
   Brain,
   Briefcase,
+  CaretDown,
+  CaretRight,
   ChartBar,
   Check,
   CheckCircle,
   ClockCounterClockwise,
   Code,
+  FilePdf,
   FileText,
   FolderSimple,
   GearSix,
@@ -28,19 +32,26 @@ import {
   UploadSimple,
   X,
 } from "@phosphor-icons/react";
+import { useAutoDismiss } from "./useAutoDismiss.js";
+import * as pdfjsLib from "pdfjs-dist";
+import pdfWorkerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 import {
   createPosition,
-  createResume,
   deleteResume,
   deletePosition,
   getPositions,
   getResumes,
   getResume,
+  getResumePdf,
   getSessions,
   regeneratePositionQuestions,
+  reorderResumes,
   updateResume,
   updatePosition,
+  uploadResume,
 } from "./api";
+
+pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
 
 const REVIEW_MODES = [
   {
@@ -143,7 +154,6 @@ export function PrimarySidebar({ activeView, onNavigate, onNewSession, hasProjec
       </nav>
       <div className="stitch-sidebar-footer">
         <button type="button" onClick={() => onNavigate("settings")}><GearSix size={16} /> 应用设置</button>
-        <span><span className="status-dot" /> 本地引擎在线</span>
       </div>
     </aside>
   );
@@ -177,7 +187,7 @@ export function PositionPreparationView({ candidateId = "default", currentProjec
   const [isCreating, setIsCreating] = useState(false);
   const [busyAction, setBusyAction] = useState("");
   const [error, setError] = useState("");
-  const [notice, setNotice] = useState("");
+  const [notice, showNotice] = useAutoDismiss();
   const [activeTab, setActiveTab] = useState("overview");
   const [draft, setDraft] = useState({
     title: "",
@@ -236,7 +246,7 @@ export function PositionPreparationView({ candidateId = "default", currentProjec
     event.preventDefault();
     setBusyAction("create");
     setError("");
-    setNotice("");
+    showNotice("");
     try {
       const created = await createPosition({
         candidate_id: candidateId,
@@ -250,7 +260,7 @@ export function PositionPreparationView({ candidateId = "default", currentProjec
       setSelectedId(created.position_id);
       setIsCreating(false);
       setDraft({ title: "", company: "", source_url: "", project_ids: currentProjectId ? String(currentProjectId) : "", jd_text: "" });
-      setNotice(`已生成 ${created.questions?.length || 0} 道岗位准备题。`);
+      showNotice(`已生成 ${created.questions?.length || 0} 道岗位准备题。`);
       setActiveTab("questions");
     } catch (cause) {
       setError(`创建岗位失败：${positionError(cause)}`);
@@ -274,7 +284,7 @@ export function PositionPreparationView({ candidateId = "default", currentProjec
         jd_text: text,
         title: current.title || file.name.replace(/\.[^.]+$/, ""),
       }));
-      setNotice(`已读取 ${file.name}，请确认岗位信息后保存。`);
+      showNotice(`已读取 ${file.name}，请确认岗位信息后保存。`);
     } catch (cause) {
       setError(`无法读取 JD 文件：${positionError(cause)}`);
     }
@@ -286,7 +296,7 @@ export function PositionPreparationView({ candidateId = "default", currentProjec
     setError("");
     try {
       patchSelected(await updatePosition(selected.position_id, { status }));
-      setNotice("岗位状态已更新。");
+      showNotice("岗位状态已更新。");
     } catch (cause) {
       setError(`更新岗位失败：${positionError(cause)}`);
     } finally {
@@ -301,7 +311,7 @@ export function PositionPreparationView({ candidateId = "default", currentProjec
     try {
       const updated = await regeneratePositionQuestions(selected.position_id);
       patchSelected(updated);
-      setNotice(`已重新生成 ${updated.questions?.length || 0} 道题。`);
+      showNotice(`已重新生成 ${updated.questions?.length || 0} 道题。`);
     } catch (cause) {
       setError(`重新生成失败：${positionError(cause)}`);
     } finally {
@@ -318,7 +328,7 @@ export function PositionPreparationView({ candidateId = "default", currentProjec
       const next = positions.filter((item) => item.position_id !== selected.position_id);
       setPositions(next);
       setSelectedId(next[0]?.position_id || "");
-      setNotice("岗位已删除。");
+      showNotice("岗位已删除。");
     } catch (cause) {
       setError(`删除岗位失败：${positionError(cause)}`);
     } finally {
@@ -400,6 +410,11 @@ export function PositionPreparationView({ candidateId = "default", currentProjec
 export function InterviewContextRail({ workspace, session, tasks, structure, progress, selectedItem, onSelectTask, onSelectStructure, onNewSession, onRenameTask, onDeleteTask, busyTaskId, isCreatingSession }) {
   const [editingTaskId, setEditingTaskId] = useState("");
   const [draftTitle, setDraftTitle] = useState("");
+  const [collapsedFields, setCollapsedFields] = useState({ claims: false, structure: false, sessions: false });
+
+  function toggleCollapse(key) {
+    setCollapsedFields((current) => ({ ...current, [key]: !current[key] }));
+  }
 
   function beginRename(task) {
     setEditingTaskId(task.id);
@@ -430,25 +445,28 @@ export function InterviewContextRail({ workspace, session, tasks, structure, pro
         <strong>{workspace.name || session.projectName || "未命名项目"}</strong>
         <span>{session.status?.analysis_status || "READY"}</span>
       </div>
-      <section className="context-current-task">
-        <div><small>当前任务</small><button type="button" onClick={onNewSession} aria-label="新建复盘"><Plus size={14} /></button></div>
-        <strong>{session.title || reviewModeLabel(session.reviewMode)}</strong>
-        <span>{reviewModeLabel(session.reviewMode)} · {session.topic || "等待首个主题"}</span>
-        <div className="context-progress-label"><span>项目进度</span><b>{session.progress || 0}{session.totalQuestions ? ` / ${session.totalQuestions}` : ""}</b></div>
-        <div className="context-progress"><span style={{ width: `${progress}%` }} /></div>
-      </section>
       {session.resumeClaims?.length > 0 && (
-        <section className="context-resume-claims" aria-label="候选人主张">
-          <div className="context-section-heading"><small>候选人主张</small><span>{session.resumeClaims.length} 条</span></div>
-          {session.resumeClaims.slice(0, 5).map((claim, index) => (
-            <div className="context-claim" key={`${claim}-${index}`}><span>{claim}</span></div>
-          ))}
-          {session.resumeClaims.length > 5 && <small className="context-group-more">其余 {session.resumeClaims.length - 5} 条在简历详情中</small>}
+        <section className="context-resume-claims" aria-label="面试者主张">
+          <button className="context-collapse" type="button" aria-expanded={!collapsedFields.claims} onClick={() => toggleCollapse("claims")}>
+            <small>面试者主张</small>
+            <span>{session.resumeClaims.length} 条</span>
+            {collapsedFields.claims ? <CaretRight size={12} /> : <CaretDown size={12} />}
+          </button>
+          {!collapsedFields.claims && <>
+            {session.resumeClaims.slice(0, 5).map((claim, index) => (
+              <div className="context-claim" key={`${claim}-${index}`}><span>{claim}</span></div>
+            ))}
+            {session.resumeClaims.length > 5 && <small className="context-group-more">其余 {session.resumeClaims.length - 5} 条在简历详情中</small>}
+          </>}
         </section>
       )}
       <section className="context-structure" aria-busy={isCreatingSession}>
-        <div className="context-section-heading"><small>面试结构</small><span>点击主题新建会话</span></div>
-        {structure.length === 0 ? <div className="context-empty">暂无项目知识</div> : structure.map((group) => (
+        <button className="context-collapse" type="button" aria-expanded={!collapsedFields.structure} onClick={() => toggleCollapse("structure")}>
+          <small>面试结构</small>
+          <span>点击主题新建会话</span>
+          {collapsedFields.structure ? <CaretRight size={12} /> : <CaretDown size={12} />}
+        </button>
+        {!collapsedFields.structure && (structure.length === 0 ? <div className="context-empty">暂无项目知识</div> : structure.map((group) => (
           <div className="context-group" key={group.label}>
             <strong>{group.label}</strong>
             {group.children?.map((child) => (
@@ -466,30 +484,61 @@ export function InterviewContextRail({ workspace, session, tasks, structure, pro
             ))}
             {group.totalCount > group.children.length && <small className="context-group-more">其余 {group.totalCount - group.children.length} 个方向在项目资料中</small>}
           </div>
-        ))}
+        )))}
       </section>
       <section className="context-session-list">
-        <div className="context-session-heading"><small>最近会话</small><span>{tasks.length}</span><button className="context-session-add" type="button" onClick={onNewSession} aria-label="新增会话"><Plus size={13} /></button></div>
+        <div className="context-session-heading">
+          <button className="context-collapse context-collapse-text" type="button" aria-expanded={!collapsedFields.sessions} onClick={() => toggleCollapse("sessions")}>
+            <small>最近会话</small>
+            <span>{tasks.length}</span>
+          </button>
+          <button className="context-session-add" type="button" onClick={onNewSession} aria-label="新增会话"><Plus size={13} /></button>
+          <button className="context-collapse-caret" type="button" aria-expanded={!collapsedFields.sessions} aria-label={collapsedFields.sessions ? "展开最近会话" : "收起最近会话"} onClick={() => toggleCollapse("sessions")}>
+            {collapsedFields.sessions ? <CaretRight size={12} /> : <CaretDown size={12} />}
+          </button>
+        </div>
+        {!collapsedFields.sessions && <div className="context-session-rows">
         {tasks.length === 0 && <div className="context-empty">暂无会话，点击 + 新建。</div>}
-        {tasks.slice(0, 8).map((task) => (
-          <div className={`context-session-row ${task.id === session.sessionId ? "is-active" : ""}`} key={task.id}>
-            {editingTaskId === task.id ? (
-              <form className="context-session-edit" onSubmit={(event) => submitRename(event, task)}>
-                <input autoFocus maxLength={80} aria-label="会话名称" value={draftTitle} onChange={(event) => setDraftTitle(event.target.value)} onKeyDown={(event) => { if (event.key === "Escape") setEditingTaskId(""); }} disabled={busyTaskId === task.id} />
-                <button type="submit" aria-label="保存会话名称" disabled={!draftTitle.trim() || busyTaskId === task.id}><Check size={13} /></button>
-                <button type="button" aria-label="取消编辑" onClick={() => setEditingTaskId("")} disabled={busyTaskId === task.id}><X size={13} /></button>
-              </form>
-            ) : (
-              <>
-                <button className="context-session-open" type="button" onClick={() => onSelectTask(task)} title={task.name}><span>{task.name}</span><ArrowRight size={13} /></button>
-                <div className="context-session-actions">
-                  <button type="button" aria-label={`编辑会话名称：${task.name}`} onClick={() => beginRename(task)} disabled={busyTaskId === task.id}><PencilSimple size={13} /></button>
-                  <button className="is-danger" type="button" aria-label={`删除会话：${task.name}`} onClick={() => confirmDelete(task)} disabled={busyTaskId === task.id}><Trash size={13} /></button>
-                </div>
-              </>
-            )}
-          </div>
-        ))}
+        {(() => {
+          const rows = [];
+          const current = tasks.find((task) => task.id === session.sessionId);
+          if (current) rows.push(current);
+          for (const task of tasks) {
+            if (task === current) continue;
+            rows.push(task);
+          }
+          return rows.map((task) => {
+            const isCurrent = task === current;
+            return (
+              <div className={`context-session-row ${isCurrent ? "is-active is-current" : ""}`} key={task.id}>
+                {editingTaskId === task.id ? (
+                  <form className="context-session-edit" onSubmit={(event) => submitRename(event, task)}>
+                    <input autoFocus maxLength={80} aria-label="会话名称" value={draftTitle} onChange={(event) => setDraftTitle(event.target.value)} onKeyDown={(event) => { if (event.key === "Escape") setEditingTaskId(""); }} disabled={busyTaskId === task.id} />
+                    <button type="submit" aria-label="保存会话名称" disabled={!draftTitle.trim() || busyTaskId === task.id}><Check size={13} /></button>
+                    <button type="button" aria-label="取消编辑" onClick={() => setEditingTaskId("")} disabled={busyTaskId === task.id}><X size={13} /></button>
+                  </form>
+                ) : (
+                  <>
+                    <button className="context-session-open" type="button" onClick={() => onSelectTask(task)} title={task.name}>
+                      <span>{task.name}</span>
+                      {isCurrent && (<>
+                        <span className="context-current-meta">{reviewModeLabel(session.reviewMode)} · {session.topic || "等待首个主题"}</span>
+                        <span className="context-progress-label"><span>项目进度</span><b>{session.progress || 0}{session.totalQuestions ? ` / ${session.totalQuestions}` : ""}</b></span>
+                        <span className="context-progress"><span style={{ width: `${progress}%` }} /></span>
+                      </>)}
+                      <ArrowRight size={13} />
+                    </button>
+                    <div className="context-session-actions">
+                      <button type="button" aria-label={`编辑会话名称：${task.name}`} onClick={() => beginRename(task)} disabled={busyTaskId === task.id}><PencilSimple size={13} /></button>
+                      <button className="is-danger" type="button" aria-label={`删除会话：${task.name}`} onClick={() => confirmDelete(task)} disabled={busyTaskId === task.id}><Trash size={13} /></button>
+                    </div>
+                  </>
+                )}
+              </div>
+            );
+          });
+        })()}
+        </div>}
       </section>
     </aside>
   );
@@ -497,7 +546,8 @@ export function InterviewContextRail({ workspace, session, tasks, structure, pro
 
 export function ResumeUploadDialog({ open, onClose, onCreated }) {
   const [step, setStep] = useState("create");
-  const [resumeDraft, setResumeDraft] = useState({ name: "", role: "", domain: "", resume_text: "" });
+  const [resumeDraft, setResumeDraft] = useState({ name: "", role: "", domain: "" });
+  const [pdfFile, setPdfFile] = useState(null);
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState("");
   const [createdResume, setCreatedResume] = useState(null);
@@ -506,7 +556,8 @@ export function ResumeUploadDialog({ open, onClose, onCreated }) {
   useEffect(() => {
     if (!open) return;
     setStep("create");
-    setResumeDraft({ name: "", role: "", domain: "", resume_text: "" });
+    setResumeDraft({ name: "", role: "", domain: "" });
+    setPdfFile(null);
     setUploadError("");
     setCreatedResume(null);
     setClaimSkips({});
@@ -514,38 +565,44 @@ export function ResumeUploadDialog({ open, onClose, onCreated }) {
 
   if (!open) return null;
 
-  async function handleResumeTextFile(event) {
+  async function readPdfBase64(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result).split(",")[1] || "");
+      reader.onerror = () => reject(reader.error);
+      reader.readAsDataURL(file);
+    });
+  }
+
+  async function handleResumeFile(event) {
     const file = event.target.files?.[0];
     event.target.value = "";
     if (!file) return;
-    if (file.size > 1024 * 1024) {
-      setUploadError("简历文本文件不能超过 1MB。");
+    if (file.size > 10 * 1024 * 1024) {
+      setUploadError("PDF 简历不能超过 10MB。");
       return;
     }
     try {
-      const text = await file.text();
-      setResumeDraft((current) => ({
-        ...current,
-        resume_text: text,
-        name: current.name || file.name.replace(/\.[^.]+$/, ""),
-      }));
+      const base64 = await readPdfBase64(file);
+      setPdfFile({ name: file.name, base64 });
+      setResumeDraft((current) => ({ ...current, name: current.name || file.name.replace(/\.[^.]+$/, "") }));
       setUploadError("");
     } catch (cause) {
-      setUploadError(`无法读取简历文件：${cause?.message || "未知错误"}`);
+      setUploadError(`无法读取 PDF 简历：${cause?.message || "未知错误"}`);
     }
   }
 
   async function handleCreateResume(event) {
     event.preventDefault();
-    if (!resumeDraft.resume_text.trim() || uploading) return;
+    if (!pdfFile || uploading) return;
     setUploading(true);
     setUploadError("");
     try {
-      const created = await createResume({
+      const created = await uploadResume({
         name: resumeDraft.name.trim(),
         role: resumeDraft.role.trim(),
         domain: resumeDraft.domain.trim(),
-        resume_text: resumeDraft.resume_text,
+        file_base64: pdfFile.base64,
       });
       setCreatedResume(created);
       setClaimSkips(Object.fromEntries(created.claims.map((claim) => [claim.claim_id, claim.skip])));
@@ -584,7 +641,7 @@ export function ResumeUploadDialog({ open, onClose, onCreated }) {
             <span className="resume-picker-kicker">{step === "create" ? "NEW RESUME" : "EXTRACTION COMPLETE"}</span>
             <h2>{step === "create" ? "上传新简历" : "已提取简历主张"}</h2>
             <p>
-              {step === "create" && "粘贴简历原文或导入 UTF-8 文本文件，系统会提取候选人主张。"}
+              {step === "create" && "上传 PDF 简历，系统会提取面试者主张。"}
               {step === "review" && `已从 ${createdResume?.name || "简历"} 中识别 ${createdResume?.claims?.length || 0} 条可用于项目复盘的主张。`}
             </p>
           </div>
@@ -592,14 +649,21 @@ export function ResumeUploadDialog({ open, onClose, onCreated }) {
         </header>
         {step === "create" && (
           <form className="resume-create-form" id="resume-create-form" onSubmit={handleCreateResume}>
-            <label className="resume-field"><span>简历原文 *</span><textarea value={resumeDraft.resume_text} onChange={(event) => setResumeDraft((current) => ({ ...current, resume_text: event.target.value }))} required maxLength={100000} placeholder="粘贴简历内容，包括基本信息、工作经历和项目经历…" /><label className="resume-file-import"><UploadSimple size={15} /><span>导入 .txt / .md / .json</span><input type="file" accept=".txt,.md,.json,text/plain,text/markdown,application/json" onChange={handleResumeTextFile} /></label></label>
+            <label className="resume-file-import"><UploadSimple size={15} /><span>上传 PDF 简历</span><input type="file" accept=".pdf,application/pdf" onChange={handleResumeFile} /></label>
+            {pdfFile && (
+              <div className="resume-pdf-file">
+                <FilePdf size={14} />
+                <span>{pdfFile.name}</span>
+                <button type="button" onClick={() => setPdfFile(null)} disabled={uploading} aria-label="移除所选 PDF 文件"><X size={13} /></button>
+              </div>
+            )}
             <div className="resume-form-grid">
               <label className="resume-field"><span>姓名</span><input value={resumeDraft.name} onChange={(event) => setResumeDraft((current) => ({ ...current, name: event.target.value }))} maxLength={64} placeholder="留空时尝试从首行识别" /></label>
               <label className="resume-field"><span>岗位</span><input value={resumeDraft.role} onChange={(event) => setResumeDraft((current) => ({ ...current, role: event.target.value }))} maxLength={64} placeholder="例如：后端工程师" /></label>
               <label className="resume-field"><span>领域</span><input value={resumeDraft.domain} onChange={(event) => setResumeDraft((current) => ({ ...current, domain: event.target.value }))} maxLength={64} placeholder="例如：交易系统" /></label>
             </div>
             {uploadError && <div className="resume-create-error" role="alert"><WarningCircle size={15} /> {uploadError}</div>}
-            <p className="resume-create-note">图片和 PDF 的 OCR 暂不支持；请使用 UTF-8 文本。</p>
+            <p className="resume-create-note">仅支持含文本层的 PDF 简历；扫描件（图片型 PDF）无法提取文本。</p>
           </form>
         )}
         {step === "review" && createdResume && (
@@ -609,7 +673,7 @@ export function ResumeUploadDialog({ open, onClose, onCreated }) {
               <div><strong>{createdResume.name}</strong><small>ID: {createdResume.resume_id} · 已提取</small></div>
             </div>
             <div className="resume-review-list">
-              <h4>待确认的候选人主张</h4>
+              <h4>待确认的面试者主张</h4>
               {createdResume.claims.length === 0 && <div className="resume-picker-empty">未能从简历中识别可追问的主张，确认后将保留简历。</div>}
               {createdResume.claims.map((claim, index) => (
                 <div className="resume-review-item" key={claim.claim_id}>
@@ -628,9 +692,115 @@ export function ResumeUploadDialog({ open, onClose, onCreated }) {
           <small>{step === "create" ? "保存后会自动提取主张，可在下一步确认" : "可在详情页随时查看原文与已提取内容"}</small>
           <span>
             {step === "create" && <button type="button" onClick={onClose} disabled={uploading}>取消</button>}
-            {step === "create" && <button className="resume-confirm" type="submit" form="resume-create-form" disabled={!resumeDraft.resume_text.trim() || uploading}>{uploading ? "正在提取…" : "提交并提取"}<ArrowRight size={15} /></button>}
+            {step === "create" && <button className="resume-confirm" type="submit" form="resume-create-form" disabled={!pdfFile || uploading}>{uploading ? "正在提取…" : "提交并提取"}<ArrowRight size={15} /></button>}
             {step === "review" && <button type="button" onClick={() => { setStep("create"); setCreatedResume(null); setUploadError(""); }} disabled={uploading}>返回重新选择文件</button>}
             {step === "review" && <button className="resume-confirm" type="button" onClick={handleConfirmCreatedResume} disabled={uploading}>{uploading ? "正在保存…" : "确认并选中"}<ArrowRight size={15} /></button>}
+          </span>
+        </footer>
+      </div>
+    </div>
+  );
+}
+
+export function ResumeEditDialog({ resume, onClose, onSaved }) {
+  const [draft, setDraft] = useState({ name: "", role: "", domain: "" });
+  const [pdfFile, setPdfFile] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    if (!resume) return;
+    setDraft({ name: resume.name, role: resume.role, domain: resume.domain });
+    setPdfFile(null);
+    setSaving(false);
+    setError("");
+  }, [resume]);
+
+  if (!resume) return null;
+
+  async function readPdfBase64(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result).split(",")[1] || "");
+      reader.onerror = () => reject(reader.error);
+      reader.readAsDataURL(file);
+    });
+  }
+
+  async function handlePdfFile(event) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    if (file.size > 10 * 1024 * 1024) {
+      setError("PDF 简历不能超过 10MB。");
+      return;
+    }
+    try {
+      const base64 = await readPdfBase64(file);
+      setPdfFile({ name: file.name, base64 });
+      setError("");
+    } catch (cause) {
+      setError(`无法读取 PDF 简历：${cause?.message || "未知错误"}`);
+    }
+  }
+
+  async function handleSave(event) {
+    event.preventDefault();
+    if (saving) return;
+    const changes = {};
+    if (draft.name.trim() !== resume.name) changes.name = draft.name.trim();
+    if (draft.role.trim() !== resume.role) changes.role = draft.role.trim();
+    if (draft.domain.trim() !== resume.domain) changes.domain = draft.domain.trim();
+    if (pdfFile) changes.file_base64 = pdfFile.base64;
+    if (Object.keys(changes).length === 0) {
+      onClose();
+      return;
+    }
+    setSaving(true);
+    setError("");
+    try {
+      const updated = await updateResume(resume.id, changes);
+      await onSaved?.({ ...updated, pdfChanged: Boolean(pdfFile) });
+    } catch (cause) {
+      setError(cause?.details?.error || cause?.message || "保存简历失败");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="resume-picker-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !saving) onClose(); }}>
+      <div className="resume-picker-dialog" role="dialog" aria-modal="true" aria-label={`编辑简历 ${resume.name}`}>
+        <header>
+          <div>
+            <span className="resume-picker-kicker">EDIT RESUME</span>
+            <h2>编辑简历</h2>
+            <p>修改面试者信息，或替换 PDF 原件重新提取主张。</p>
+          </div>
+          <button type="button" aria-label="关闭" onClick={onClose} disabled={saving}><X size={18} /></button>
+        </header>
+        <form className="resume-create-form" id="resume-edit-form" onSubmit={handleSave}>
+          <label className="resume-file-import"><UploadSimple size={15} /><span>{pdfFile ? "已选择替换文件" : "替换 PDF 原件（可选）"}</span><input type="file" accept=".pdf,application/pdf" onChange={handlePdfFile} /></label>
+          {pdfFile && (
+            <div className="resume-pdf-file">
+              <FilePdf size={14} />
+              <span>{pdfFile.name}</span>
+              <button type="button" onClick={() => setPdfFile(null)} disabled={saving} aria-label="移除所选 PDF 文件"><X size={13} /></button>
+            </div>
+          )}
+          {pdfFile && <p className="resume-create-note">替换后主张将按新 PDF 文本重新提取，原有“暂不用以提问”设置会重置。</p>}
+          <div className="resume-form-grid">
+            <label className="resume-field"><span>姓名</span><input value={draft.name} onChange={(event) => setDraft((current) => ({ ...current, name: event.target.value }))} maxLength={64} required placeholder="面试者姓名" /></label>
+            <label className="resume-field"><span>岗位</span><input value={draft.role} onChange={(event) => setDraft((current) => ({ ...current, role: event.target.value }))} maxLength={64} placeholder="例如：后端工程师" /></label>
+            <label className="resume-field"><span>领域</span><input value={draft.domain} onChange={(event) => setDraft((current) => ({ ...current, domain: event.target.value }))} maxLength={64} placeholder="例如：交易系统" /></label>
+          </div>
+          {error && <div className="resume-create-error" role="alert"><WarningCircle size={15} /> {error}</div>}
+        </form>
+        <footer className="resume-picker-footer">
+          <small>不选 PDF 则仅更新姓名、岗位与领域</small>
+          <span>
+            <button type="button" onClick={onClose} disabled={saving}>取消</button>
+            <button className="resume-confirm" type="submit" form="resume-edit-form" disabled={saving}>{saving ? "正在保存…" : "保存修改"}<ArrowRight size={15} /></button>
           </span>
         </footer>
       </div>
@@ -725,8 +895,8 @@ export function SessionSetupView({ session, candidateId, isCreating, error, onCr
           <section className="session-candidate-card">
             <div className="candidate-avatar"><User size={22} /></div>
             <div className="candidate-copy">
-              <strong>{candidateRecord?.name || "未选择候选人"}</strong>
-              <small>{candidateRecord ? `ID: ${candidateRecord.id}` : "从简历库选择候选人"}</small>
+              <strong>{candidateRecord?.name || "未选择面试者"}</strong>
+              <small>{candidateRecord ? `ID: ${candidateRecord.id}` : "从简历库选择面试者"}</small>
             </div>
             <span className="candidate-mode">{reviewModeLabel(mode)}</span>
             <button className="candidate-swap" type="button" onClick={openResumePicker}>更换</button>
@@ -761,7 +931,7 @@ export function SessionSetupView({ session, candidateId, isCreating, error, onCr
               <div>
                 <span className="resume-picker-kicker">SELECT CANDIDATE</span>
                 <h2>选择简历</h2>
-                <p>从简历库选择候选人，系统将结合简历主张与项目知识生成复盘</p>
+                <p>从简历库选择面试者，系统将结合简历主张与项目知识生成复盘</p>
               </div>
               <button type="button" aria-label="关闭" onClick={() => setIsResumePickerOpen(false)}><X size={18} /></button>
             </header>
@@ -831,14 +1001,39 @@ function normalizeResumeItem(item) {
   };
 }
 
+const RESUME_RAIL_MIN = 240;
+const RESUME_RAIL_MAX = 480;
+const RESUME_RAIL_DEFAULT = 340;
+const RESUME_RAIL_KEY = "resume_rail_width";
+
+function defaultResumeRailWidth() {
+  const stored = Number(globalThis.localStorage?.getItem(RESUME_RAIL_KEY));
+  return Number.isFinite(stored) && stored >= RESUME_RAIL_MIN && stored <= RESUME_RAIL_MAX ? stored : RESUME_RAIL_DEFAULT;
+}
+
 export function ResumeLibraryView() {
   const [resumes, setResumes] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState("");
-  const [notice, setNotice] = useState("");
+  const [notice, showNotice] = useAutoDismiss();
   const [query, setQuery] = useState("");
   const [isUploadOpen, setIsUploadOpen] = useState(false);
   const [selectedId, setSelectedId] = useState("");
+  const [detailVersion, setDetailVersion] = useState(0);
+  const [editingResume, setEditingResume] = useState(null);
+  const [railWidth, setRailWidth] = useState(defaultResumeRailWidth);
+  const [dragIndex, setDragIndex] = useState(null);
+  const [overIndex, setOverIndex] = useState(null);
+
+  const railResize = usePanelResize({
+    value: railWidth,
+    onChange: setRailWidth,
+    min: RESUME_RAIL_MIN,
+    max: RESUME_RAIL_MAX,
+    direction: 1,
+    storageKey: RESUME_RAIL_KEY,
+    onReset: () => RESUME_RAIL_DEFAULT,
+  });
 
   async function loadResumes() {
     setIsLoading(true);
@@ -857,6 +1052,13 @@ export function ResumeLibraryView() {
     loadResumes();
   }, []);
 
+  // 进入简历库或删除当前项后，自动选中最顶部一条（尊重用户已做的选择）。
+  useEffect(() => {
+    if (!isLoading && resumes.length > 0 && !selectedId) {
+      setSelectedId(resumes[0].id);
+    }
+  }, [isLoading, resumes.length, selectedId]);
+
   const filtered = resumes.filter((item) => {
     const needle = query.trim().toLowerCase();
     if (!needle) return true;
@@ -864,8 +1066,58 @@ export function ResumeLibraryView() {
       .some((field) => field.toLowerCase().includes(needle));
   });
 
+  function handleDragStart(index) {
+    setDragIndex(index);
+  }
+
+  function handleDragOver(event, index) {
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "move";
+    if (overIndex !== index) setOverIndex(index);
+  }
+
+  function resetDragState() {
+    setDragIndex(null);
+    setOverIndex(null);
+  }
+
+  async function handleDrop() {
+    if (dragIndex === null || overIndex === null || dragIndex === overIndex) {
+      resetDragState();
+      return;
+    }
+    const previous = resumes;
+    const next = [...resumes];
+    const [moved] = next.splice(dragIndex, 1);
+    next.splice(overIndex, 0, moved);
+    resetDragState();
+    setResumes(next);
+    showNotice("");
+    try {
+      await reorderResumes(next.map((item) => item.id));
+      showNotice("简历顺序已保存。");
+    } catch (cause) {
+      setResumes(previous);
+      setError(cause?.details?.error || cause?.message || "保存简历顺序失败");
+    }
+  }
+
+  async function handleDeleteItem(item) {
+    if (!globalThis.confirm?.(`确定删除简历“${item.name}”吗？此操作无法撤销。`)) return;
+    setError("");
+    try {
+      await deleteResume(item.id);
+      if (selectedId === item.id) setSelectedId("");
+      showNotice("简历已删除。");
+      await loadResumes();
+    } catch (cause) {
+      showNotice("");
+      setError(`删除简历失败：${cause?.details?.error || cause?.message || "未知错误"}`);
+    }
+  }
+
   return (
-    <section className="stitch-page resume-library-page two-column" aria-label="简历库">
+    <section className="stitch-page resume-library-page two-column" style={{ gridTemplateColumns: `${railWidth}px minmax(0, 1fr)` }} aria-label="简历库">
       <aside className="resume-library-rail" aria-label="简历列表">
         <div className="resume-library-rail-head">
           <span>CANDIDATE CONTEXT</span>
@@ -881,31 +1133,60 @@ export function ResumeLibraryView() {
         <div className="resume-library-list">
           {(error || notice) && <div className={`resume-list-feedback ${error ? "is-error" : "is-success"}`} role={error ? "alert" : "status"}>{error ? <WarningCircle size={14} /> : <CheckCircle size={14} weight="fill" />}<span>{error || notice}</span></div>}
           {isLoading ? <div className="resume-list-state">正在加载简历库…</div> : resumes.length === 0 ? (
-            <div className="resume-list-state"><strong>简历库还是空的</strong><p>上传一份简历，系统会提取候选人主张用于复盘提问。</p><button type="button" onClick={() => setIsUploadOpen(true)}><Plus size={14} /> 上传新简历</button></div>
+            <div className="resume-list-state"><strong>简历库还是空的</strong><p>上传一份简历，系统会提取面试者主张用于复盘提问。</p><button type="button" onClick={() => setIsUploadOpen(true)}><Plus size={14} /> 上传新简历</button></div>
           ) : filtered.length === 0 ? (
             <div className="resume-list-state"><strong>没有匹配的简历</strong><p>试试其他关键词。</p></div>
           ) : (
-            filtered.map((resume) => (
-              <button className={`resume-list-item ${selectedId === resume.id ? "is-active" : ""}`} key={resume.id} type="button" onClick={() => setSelectedId(resume.id)}>
-                <FileText size={17} />
-                <span className="resume-list-copy">
-                  <strong>{resume.name}</strong>
-                  <small>
-                    <b className={`resume-badge is-${resume.statusTone}`}>{resumeStatusLabel(resume.status)}</b>
-                    <span>{resume.role}{resume.domain ? ` · ${resume.domain}` : ""} · 更新于 {resume.updated}</span>
-                  </small>
+            filtered.map((resume, index) => (
+              <div
+                className={`resume-list-item ${selectedId === resume.id ? "is-active" : ""} ${dragIndex === index ? "is-dragging" : ""} ${overIndex === index && dragIndex !== null && dragIndex !== index ? "is-drop-target" : ""}`}
+                key={resume.id}
+                draggable={!query}
+                onDragStart={() => handleDragStart(index)}
+                onDragOver={(event) => handleDragOver(event, index)}
+                onDragLeave={() => { if (overIndex === index) setOverIndex(null); }}
+                onDrop={handleDrop}
+                onDragEnd={resetDragState}
+                title={query ? "清除搜索后可拖拽排序" : "拖拽可调整简历顺序"}
+              >
+                <button className="resume-list-select" type="button" onClick={() => setSelectedId(resume.id)}>
+                  <FileText size={17} />
+                  <span className="resume-list-copy">
+                    <strong>{resume.name}</strong>
+                    <small>
+                      <b className={`resume-badge is-${resume.statusTone}`}>{resumeStatusLabel(resume.status)}</b>
+                      <span>{resume.role}{resume.domain ? ` · ${resume.domain}` : ""} · 更新于 {resume.updated}</span>
+                    </small>
+                  </span>
+                </button>
+                <span className="resume-list-actions">
+                  <button type="button" aria-label={`编辑 ${resume.name}`} title="编辑简历" onClick={() => setEditingResume(resume)}><PencilSimple size={13} /></button>
+                  <button type="button" aria-label={`删除 ${resume.name}`} title="删除简历" onClick={() => handleDeleteItem(resume)}><Trash size={13} /></button>
                 </span>
-              </button>
+              </div>
             ))
           )}
         </div>
       </aside>
+      <div
+        className="workspace-resizer resume-library-resizer"
+        role="separator"
+        aria-label="调整简历列表宽度"
+        aria-orientation="vertical"
+        aria-valuemin={RESUME_RAIL_MIN}
+        aria-valuemax={RESUME_RAIL_MAX}
+        aria-valuenow={railWidth}
+        tabIndex={0}
+        style={{ left: railWidth }}
+        {...railResize.handlers}
+      />
       <main className="resume-library-detail">
         {selectedId ? (
           <ResumeDetailView
+            key={detailVersion}
             embedded
             resumeId={selectedId}
-            onDeleted={() => { setSelectedId(""); setNotice("简历已删除。"); loadResumes(); }}
+            onDeleted={() => { setSelectedId(""); showNotice("简历已删除。"); loadResumes(); }}
           />
         ) : (
           <div className="resume-detail-empty-state"><FileText size={26} weight="duotone" /><strong>选择一份简历查看详情</strong><p>从左侧选择简历，查看提取的主张、标签与原文。</p></div>
@@ -916,7 +1197,17 @@ export function ResumeLibraryView() {
         onClose={() => setIsUploadOpen(false)}
         onCreated={async () => {
           setIsUploadOpen(false);
-          setNotice("简历已上传并提取主张。");
+          showNotice("简历已上传并提取主张。");
+          await loadResumes();
+        }}
+      />
+      <ResumeEditDialog
+        resume={editingResume}
+        onClose={() => setEditingResume(null)}
+        onSaved={async (updated) => {
+          setEditingResume(null);
+          showNotice(updated.pdfChanged ? "简历信息与 PDF 原件已更新，主张已按新文本重新提取。" : "简历信息已保存。");
+          setDetailVersion((version) => version + 1);
           await loadResumes();
         }}
       />
@@ -924,32 +1215,82 @@ export function ResumeLibraryView() {
   );
 }
 
+function ResumePdfPreview({ data }) {
+  const pagesRef = useRef(null);
+  const [status, setStatus] = useState("正在加载 PDF…");
+
+  useEffect(() => {
+    let cancelled = false;
+    const container = pagesRef.current;
+    if (!container) return undefined;
+    container.replaceChildren();
+    setStatus("正在加载 PDF…");
+    (async () => {
+      try {
+        const pdf = await pdfjsLib.getDocument({ data }).promise;
+        if (cancelled) return;
+        for (let index = 1; index <= pdf.numPages; index += 1) {
+          const page = await pdf.getPage(index);
+          const viewport = page.getViewport({ scale: 1.5 });
+          const canvas = document.createElement("canvas");
+          canvas.width = Math.floor(viewport.width);
+          canvas.height = Math.floor(viewport.height);
+          await page.render({ canvasContext: canvas.getContext("2d"), viewport }).promise;
+          if (cancelled) return;
+          container.appendChild(canvas);
+        }
+        if (!cancelled) setStatus("");
+      } catch (cause) {
+        if (!cancelled) setStatus(`PDF 渲染失败：${cause?.message || "未知错误"}`);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [data]);
+
+  return (
+    <div className="resume-pdf-view">
+      {status && <div className="resume-pdf-status"><FilePdf size={15} /> {status}</div>}
+      <div className="resume-pdf-pages" ref={pagesRef} />
+    </div>
+  );
+}
+
 export function ResumeDetailView({ resumeId, onDeleted, embedded = false }) {
   const [resume, setResume] = useState(null);
+  const [pdfData, setPdfData] = useState(null);
+  const [pdfError, setPdfError] = useState("");
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState("");
   const [savingId, setSavingId] = useState("");
-  const [savedNotice, setSavedNotice] = useState("");
+  const [savedNotice, showSavedNotice] = useAutoDismiss();
 
   useEffect(() => {
     let cancelled = false;
     setIsLoading(true);
     setError("");
+    setPdfData(null);
+    setPdfError("");
     getResume(resumeId)
       .then((item) => { if (!cancelled) setResume(item); })
       .catch((cause) => { if (!cancelled) setError(cause?.details?.error || cause?.message || "无法读取简历"); })
       .finally(() => { if (!cancelled) setIsLoading(false); });
+    getResumePdf(resumeId)
+      .then((bytes) => { if (!cancelled) setPdfData(bytes); })
+      .catch((cause) => {
+        if (cancelled) return;
+        setPdfError(cause?.status === 404 ? "该简历是历史数据，没有 PDF 原件。" : cause?.details?.error || cause?.message || "无法读取 PDF");
+      });
     return () => { cancelled = true; };
   }, [resumeId]);
 
   async function toggleClaimSkip(claim, skip) {
     setSavingId(claim.claim_id);
-    setSavedNotice("");
+    showSavedNotice("");
     setError("");
     try {
       const updated = await updateResume(resume.resume_id, { claims: [{ claim_id: claim.claim_id, skip }] });
       setResume(updated);
-      setSavedNotice("主张设置已保存。");
+      showSavedNotice("主张设置已保存。");
     } catch (cause) {
       setError(`保存失败：${cause?.details?.error || cause?.message || "未知错误"}`);
     } finally {
@@ -985,8 +1326,18 @@ export function ResumeDetailView({ resumeId, onDeleted, embedded = false }) {
           {(error || savedNotice) && <div className={`position-feedback ${error ? "is-error" : "is-success"}`} role={error ? "alert" : "status"}>{error ? <WarningCircle size={17} /> : <CheckCircle size={17} weight="fill" />}<span>{error || savedNotice}</span></div>}
           <div className="resume-detail-layout">
             <main>
-              <section className="resume-detail-section">
-                <div className="resume-detail-heading"><strong>候选人主张</strong><span>{resume.claims.length} 条 · 关闭“暂不用以提问”后该主张不再进入复盘</span></div>
+              {pdfData ? (
+                <ResumePdfPreview data={pdfData} />
+              ) : (
+                <div className="resume-detail-empty is-pdf-empty">
+                  <FilePdf size={18} />
+                  <p>{pdfError || "该简历没有可预览的 PDF 原件。"}</p>
+                </div>
+              )}
+            </main>
+            <aside className="resume-detail-aside">
+              <section className="resume-detail-claims">
+                <div className="resume-detail-heading"><strong>面试者主张</strong><span>{resume.claims.length} 条 · 关闭“暂不用以提问”后该主张不再进入复盘</span></div>
                 {resume.claims.length === 0 && <div className="resume-detail-empty">未从该简历中识别出可追问的主张。</div>}
                 {resume.claims.map((claim, index) => (
                   <article className="resume-detail-claim" key={claim.claim_id}>
@@ -999,12 +1350,6 @@ export function ResumeDetailView({ resumeId, onDeleted, embedded = false }) {
                   </article>
                 ))}
               </section>
-              <details className="resume-detail-source">
-                <summary>查看简历原文</summary>
-                <pre>{resume.resume_text}</pre>
-              </details>
-            </main>
-            <aside className="resume-detail-aside">
               <section><small>关联项目</small>{resume.project_ids.length === 0 ? <p>未关联项目</p> : <div className="resume-detail-projects">{resume.project_ids.map((id) => <span key={id}>项目 {id}</span>)}</div>}</section>
               <section><small>创建时间</small><strong className="resume-meta">{resume.created_at?.slice(0, 10) || "—"}</strong></section>
               <section><small>更新时间</small><strong className="resume-meta">{resume.updated_at?.slice(0, 10) || "—"}</strong></section>
@@ -1075,7 +1420,7 @@ export function SessionReportView({ report, loading, error, onRetry, onPractice,
 }
 
 export function CandidateProfileView({ profile, loading, error, onRetry, onPractice, onOpenSource }) {
-  if (loading) return <PageState title="正在读取能力画像" detail="汇总候选人的跨会话主题表现…" />;
+  if (loading) return <PageState title="正在读取能力画像" detail="汇总面试者的跨会话主题表现…" />;
   if (error) return <PageState title="无法读取能力画像" detail={error} action="重新读取" onAction={onRetry} />;
   const skills = Object.entries(profile?.skills || {});
   if (skills.length === 0) return <PageState title="能力画像还没有样本" detail="完成一次回答后，后端会按主题保存分数、趋势、样本数和薄弱项。" action="开始练习" onAction={onPractice} />;
@@ -1084,7 +1429,7 @@ export function CandidateProfileView({ profile, loading, error, onRetry, onPract
     return item.weaknesses.map((text) => ({ topic, text, source: sources.get(text) }));
   });
   return (
-    <section className="stitch-page profile-page" aria-label="候选人能力画像">
+    <section className="stitch-page profile-page" aria-label="面试者能力画像">
       <header className="profile-header">
         <div className="candidate-avatar is-large"><User size={26} /></div>
         <div><h1>{profile.candidate_id}</h1><p>跨会话能力画像 · profile v{profile.version}</p></div>
@@ -1107,7 +1452,7 @@ export function CandidateProfileView({ profile, loading, error, onRetry, onPract
               ))}
             </div>
           </section>
-          <section className="profile-history-note"><ClockCounterClockwise size={18} /><div><strong>画像持续更新</strong><p>每次提交回答后，候选人的主题分数、最近表现、趋势和薄弱项都会由后端事务更新。</p></div></section>
+          <section className="profile-history-note"><ClockCounterClockwise size={18} /><div><strong>画像持续更新</strong><p>每次提交回答后，面试者的主题分数、最近表现、趋势和薄弱项都会由后端事务更新。</p></div></section>
         </main>
         <aside className="profile-aside">
           <section><div className="report-section-heading"><strong>能力趋势</strong><TrendUp size={16} /></div><div className="profile-bars">{skills.slice(0, 7).map(([name, skill]) => <span title={`${name} ${skill.score}`} style={{ height: `${Math.max(22, skill.score)}%` }} key={name} />)}</div></section>

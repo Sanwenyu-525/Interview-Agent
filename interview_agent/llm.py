@@ -413,7 +413,7 @@ class LlmEvaluator:
     ):
         selected_evidence, selected_ids = _context_payload(evidence, evidence_ids, context)
         prompt = {
-            "任务": "评价候选人回答，评分必须基于项目证据",
+            "任务": "评价面试者回答，评分必须基于项目证据",
             "项目知识": _project_payload(project),
             "当前主题": topic.name,
             "问题": question,

@@ -10,7 +10,7 @@ from unittest.mock import patch
 
 from interview_agent.ingestion.service import IngestionService
 from interview_agent.ingestion.security import _is_link_like, prepare_target
-from interview_agent.ingestion.sources import FolderSource, ZipSource
+from interview_agent.ingestion.sources import DirectorySource, FolderSource, ZipSource
 from interview_agent.ingestion.workspace import WorkspaceManager
 
 
@@ -140,6 +140,73 @@ class IngestionTests(unittest.TestCase):
             project_root = source.prepare(Path(temp_dir) / "source")
 
             self.assertEqual(project_root.joinpath("README.md").read_text(encoding="utf-8"), "sample project\n")
+
+    def test_directory_source_copies_files_preserving_layout(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            local = temp_root / "local-project"
+            (local / "src").mkdir(parents=True)
+            (local / "README.md").write_bytes(b"readme")
+            (local / "src" / "main.py").write_bytes(b"print('ok')")
+
+            project_root = DirectorySource(local).prepare(temp_root / "source")
+
+            self.assertEqual((project_root / "README.md").read_bytes(), b"readme")
+            self.assertEqual((project_root / "src" / "main.py").read_bytes(), b"print('ok')")
+            self.assertEqual(project_root.resolve(), (temp_root / "source").resolve())
+
+    def test_directory_source_rejects_missing_source_directory(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            with self.assertRaisesRegex(ValueError, "does not exist|不存在"):
+                DirectorySource(Path(temp_dir) / "missing").prepare(Path(temp_dir) / "source")
+
+    def test_directory_source_rejects_symlink_files(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            local = temp_root / "local-project"
+            local.mkdir()
+            outside = temp_root / "outside.txt"
+            outside.write_bytes(b"secret")
+            link = local / "link.txt"
+            try:
+                os.symlink(outside, link)
+            except (OSError, NotImplementedError):
+                self.skipTest("symlink creation unavailable")
+
+            with self.assertRaisesRegex(ValueError, "symbolic|symlink|符号"):
+                DirectorySource(local).prepare(temp_root / "source")
+
+    def test_directory_source_enforces_size_and_count_limits(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            local = temp_root / "local-project"
+            local.mkdir()
+            (local / "one.txt").write_bytes(b"123")
+            (local / "two.txt").write_bytes(b"456")
+
+            with self.assertRaisesRegex(ValueError, "single file size|单文件"):
+                DirectorySource(local, max_file_size=2).prepare(temp_root / "single")
+            with self.assertRaisesRegex(ValueError, "total size|总大小"):
+                DirectorySource(local, max_total_size=5).prepare(temp_root / "total")
+            with self.assertRaisesRegex(ValueError, "file count|文件数量"):
+                DirectorySource(local, max_files=1).prepare(temp_root / "count")
+
+    def test_directory_source_rejects_link_like_directory_entries(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            local = temp_root / "local-project"
+            local.mkdir()
+            outside = temp_root / "outside-dir"
+            outside.mkdir()
+            (outside / "secret.txt").write_bytes(b"secret")
+            linked = local / "linked"
+            try:
+                os.symlink(outside, linked, target_is_directory=True)
+            except (OSError, NotImplementedError):
+                self.skipTest("directory symlink creation unavailable")
+
+            with self.assertRaisesRegex(ValueError, "symbolic|symlink|符号"):
+                DirectorySource(local).prepare(temp_root / "source")
 
     def test_zip_source_rejects_zip_slip_path(self):
         with tempfile.TemporaryDirectory() as temp_dir:

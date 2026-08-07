@@ -154,8 +154,39 @@ export function createResume(resume) {
   });
 }
 
+export function uploadResume(resume) {
+  return request("/resumes/upload", {
+    method: "POST",
+    body: JSON.stringify(resume),
+  });
+}
+
 export function getResume(resumeId) {
   return request(`/resumes/${encodeURIComponent(resumeId)}`);
+}
+
+export async function getResumePdf(resumeId) {
+  const response = await fetch(`${API_BASE}/resumes/${encodeURIComponent(resumeId)}/pdf`);
+  if (!response.ok) {
+    const error = new Error(`API request failed: ${response.status}`);
+    error.status = response.status;
+    try {
+      error.details = await response.json();
+      error.code = error.details?.code || "unknown_error";
+      error.retryable = Boolean(error.details?.retryable);
+      error.requestId = error.details?.request_id || response.headers.get("X-Request-ID") || "";
+      if (typeof error.details?.error === "string" && error.details.error) {
+        error.message = error.details.error;
+      }
+    } catch {
+      error.details = null;
+      error.code = "invalid_error_response";
+      error.retryable = false;
+      error.requestId = response.headers.get("X-Request-ID") || "";
+    }
+    throw error;
+  }
+  return response.arrayBuffer();
 }
 
 export function updateResume(resumeId, changes) {
@@ -167,6 +198,13 @@ export function updateResume(resumeId, changes) {
 
 export function deleteResume(resumeId) {
   return request(`/resumes/${encodeURIComponent(resumeId)}`, { method: "DELETE" });
+}
+
+export function reorderResumes(resumeIds) {
+  return request("/resumes/order", {
+    method: "PUT",
+    body: JSON.stringify({ resume_ids: resumeIds }),
+  });
 }
 
 export function getLLMSettings() {
@@ -339,4 +377,31 @@ export async function startInterviewSession(projectId, candidateId, reviewMode, 
 export function openProjectDirectory(path, invoke = globalThis.__TAURI_INTERNALS__?.invoke) {
   if (typeof invoke !== "function") throw new Error("This page is not running in Tauri desktop mode");
   return invoke("open_project_directory", { path });
+}
+
+const LAST_PROJECT_DIR_KEY = "last_project_dir";
+
+export async function pickProjectDirectory({ invoke = globalThis.__TAURI_INTERNALS__?.invoke, dialog = null } = {}) {
+  if (typeof invoke !== "function") throw new Error("This page is not running in Tauri desktop mode");
+  const dialogApi = dialog || (await import("@tauri-apps/plugin-dialog"));
+  const lastDirectory = (() => {
+    try {
+      return globalThis.localStorage?.getItem(LAST_PROJECT_DIR_KEY) || undefined;
+    } catch {
+      return undefined;
+    }
+  })();
+  const selected = await dialogApi.open({
+    directory: true,
+    multiple: false,
+    title: "选择项目文件夹作为工作区",
+    defaultPath: lastDirectory,
+  });
+  if (typeof selected !== "string" || !selected.trim()) return null;
+  try {
+    globalThis.localStorage?.setItem(LAST_PROJECT_DIR_KEY, selected.trim());
+  } catch {
+    // localStorage 不可用时忽略，不影响本次选择
+  }
+  return selected.trim();
 }

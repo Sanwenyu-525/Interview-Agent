@@ -3,12 +3,13 @@
 from dataclasses import dataclass
 from pathlib import Path
 from typing import ClassVar, Iterable, Mapping, Protocol, runtime_checkable
+import os
 import shutil
 import stat
 import tempfile
 import zipfile
 
-from .security import path_exists, prepare_target, remove_tree, safe_relative_destination
+from .security import is_link_like, path_exists, prepare_target, remove_tree, safe_relative_destination
 
 
 ZIP_DESCRIPTOR_DEFAULT_MAX_TOTAL_SIZE = 100 * 1024 * 1024
@@ -246,7 +247,75 @@ class FolderSource:
         return _atomic_prepare(target, write)
 
 
+@dataclass(frozen=True)
+class DirectorySource:
+    """从本地目录路径安全准备项目文件。
+
+    桌面端原生目录对话框只返回路径，由本类在服务端复制到隔离工作区；
+    限制与 zip / folder 输入一致，拒绝符号链接与 junction。
+    """
+
+    source_path: Path
+    max_total_size: int | None = None
+    max_file_size: int | None = None
+    max_files: int | None = None
+    source_type: ClassVar[str] = "directory"
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "source_path", Path(self.source_path))
+        for name in ("max_total_size", "max_file_size", "max_files"):
+            value = getattr(self, name)
+            if value is not None and value < 0:
+                raise ValueError(f"{name} must be non-negative")
+
+    def prepare(self, workspace_path: Path) -> Path:
+        source = self.source_path.resolve()
+        if not source.is_dir():
+            raise ValueError(f"Source directory does not exist: {source}")
+        target = prepare_target(workspace_path)
+
+        entries: list[tuple[tuple[str, ...], Path]] = []
+        file_count = 0
+        total_size = 0
+        for root, dirs, files in os.walk(source, topdown=True, followlinks=False):
+            root_path = Path(root)
+            for name in dirs:
+                entry = root_path / name
+                if is_link_like(entry):
+                    raise ValueError(f"symbolic link entries are not allowed: {entry}")
+            for name in files:
+                entry = root_path / name
+                if is_link_like(entry):
+                    raise ValueError(f"symbolic link entries are not allowed: {entry}")
+                file_count += 1
+                if self.max_files is not None and file_count > self.max_files:
+                    raise ValueError(
+                        f"directory file count exceeds limit: {file_count} > {self.max_files}"
+                    )
+                size = entry.stat().st_size
+                if self.max_file_size is not None and size > self.max_file_size:
+                    raise ValueError(
+                        f"directory single file size exceeds limit: {size} > {self.max_file_size}"
+                    )
+                total_size += size
+                if self.max_total_size is not None and total_size > self.max_total_size:
+                    raise ValueError(
+                        f"directory total size exceeds limit: {total_size} > {self.max_total_size}"
+                    )
+                entries.append((tuple(entry.relative_to(source).parts), entry))
+
+        def write(staging: Path) -> None:
+            for relative, entry in entries:
+                destination = staging.joinpath(*relative)
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                with entry.open("rb") as source_file, destination.open("wb") as output:
+                    shutil.copyfileobj(source_file, output)
+
+        return _atomic_prepare(target, write)
+
+
 __all__ = [
+    "DirectorySource",
     "FolderFile",
     "FolderSource",
     "ProjectSource",

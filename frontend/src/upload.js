@@ -130,6 +130,27 @@ export function selectedFolderName(files) {
   return parts.length > 1 ? parts[0] : "";
 }
 
+export function folderNameFromPath(directoryPath) {
+  const parts = String(directoryPath || "").replaceAll("\\", "/").split("/").filter(Boolean);
+  return parts[parts.length - 1] || "";
+}
+
+export function createDirectoryUploadDescriptor(directoryPath, { projectId, projectName } = {}) {
+  const normalizedProjectId = normalizeProjectId(projectId);
+  if (normalizedProjectId === null) {
+    throw new Error("项目 ID 必须是正整数");
+  }
+  const normalizedPath = String(directoryPath || "").trim();
+  if (!normalizedPath) {
+    throw new Error("请先选择项目目录");
+  }
+  return {
+    project_id: normalizedProjectId,
+    project_name: String(projectName || folderNameFromPath(normalizedPath)).trim() || DEFAULT_PROJECT_NAME,
+    source: { type: "directory", source_path: normalizedPath },
+  };
+}
+
 export function generateProjectId() {
   return Date.now();
 }

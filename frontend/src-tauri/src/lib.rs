@@ -39,6 +39,7 @@ pub fn run() {
             .build(),
         )?;
       }
+      app.handle().plugin(tauri_plugin_dialog::init())?;
       Ok(())
     })
     .invoke_handler(tauri::generate_handler![open_project_directory])

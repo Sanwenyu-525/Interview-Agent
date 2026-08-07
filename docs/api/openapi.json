@@ -80,11 +80,11 @@
         "tags": ["Positions"],
         "operationId": "listPositions",
         "parameters": [
-          {"name": "candidate_id", "in": "query", "required": false, "description": "按候选人过滤；不传返回简历库全部简历", "schema": {"type": "string", "minLength": 1}},
+          {"name": "candidate_id", "in": "query", "required": false, "description": "按面试者过滤；不传返回简历库全部简历", "schema": {"type": "string", "minLength": 1}},
           {"name": "limit", "in": "query", "required": false, "schema": {"type": "integer", "minimum": 1, "maximum": 100, "default": 50}}
         ],
         "responses": {
-          "200": {"description": "候选人的目标岗位列表", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/PositionList"}}}},
+          "200": {"description": "面试者的目标岗位列表", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/PositionList"}}}},
           "400": {"$ref": "#/components/responses/InvalidRequest"}
         }
       },
@@ -148,7 +148,7 @@
           {"name": "limit", "in": "query", "required": false, "schema": {"type": "integer", "minimum": 1, "maximum": 100, "default": 50}}
         ],
         "responses": {
-          "200": {"description": "候选人的简历库列表", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ResumeList"}}}},
+          "200": {"description": "面试者的简历库列表", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ResumeList"}}}},
           "400": {"$ref": "#/components/responses/InvalidRequest"}
         }
       },
@@ -158,6 +158,29 @@
         "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/CreateResumeRequest"}}}},
         "responses": {
           "201": {"description": "简历已创建并提取主张", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Resume"}}}},
+          "400": {"$ref": "#/components/responses/InvalidRequest"},
+          "404": {"$ref": "#/components/responses/NotFound"}
+        }
+      }
+    },
+    "/resumes/upload": {
+      "post": {
+        "tags": ["Resumes"],
+        "operationId": "uploadResume",
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/UploadResumeRequest"}}}},
+        "responses": {
+          "201": {"description": "PDF 简历已解析并创建（仅提取文本层，扫描件需 OCR 不在范围）", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Resume"}}}},
+          "400": {"$ref": "#/components/responses/InvalidRequest"}
+        }
+      }
+    },
+    "/resumes/order": {
+      "put": {
+        "tags": ["Resumes"],
+        "operationId": "reorderResumes",
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ReorderResumesRequest"}}}},
+        "responses": {
+          "200": {"description": "简历列表顺序已持久化（0 为最前）", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ReorderResumesResponse"}}}},
           "400": {"$ref": "#/components/responses/InvalidRequest"},
           "404": {"$ref": "#/components/responses/NotFound"}
         }
@@ -188,6 +211,17 @@
         "operationId": "deleteResume",
         "responses": {
           "200": {"description": "简历已删除", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/DeleteResumeResponse"}}}},
+          "404": {"$ref": "#/components/responses/NotFound"}
+        }
+      }
+    },
+    "/resumes/{resume_id}/pdf": {
+      "parameters": [{"$ref": "#/components/parameters/ResumeId"}],
+      "get": {
+        "tags": ["Resumes"],
+        "operationId": "getResumePdf",
+        "responses": {
+          "200": {"description": "简历 PDF 原件", "content": {"application/pdf": {"schema": {"type": "string", "format": "binary"}}}},
           "404": {"$ref": "#/components/responses/NotFound"}
         }
       }
@@ -310,7 +344,7 @@
         "tags": ["Candidates"],
         "operationId": "getCandidateProfile",
         "responses": {
-          "200": {"description": "候选人跨会话能力画像", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/CandidateProfile"}}}},
+          "200": {"description": "面试者跨会话能力画像", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/CandidateProfile"}}}},
           "404": {"$ref": "#/components/responses/NotFound"}
         }
       }
@@ -501,13 +535,25 @@
           "max_files": {"type": "integer", "minimum": 0, "maximum": 10000}
         }
       },
+      "DirectorySource": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["type", "source_path"],
+        "properties": {
+          "type": {"const": "directory"},
+          "source_path": {"type": "string", "minLength": 1},
+          "max_total_size": {"type": "integer", "minimum": 0, "maximum": 104857600},
+          "max_file_size": {"type": "integer", "minimum": 0, "maximum": 10485760},
+          "max_files": {"type": "integer", "minimum": 0, "maximum": 10000}
+        }
+      },
       "ProjectUploadRequest": {
         "type": "object",
         "required": ["project_id", "source"],
         "properties": {
           "project_id": {"type": "integer", "minimum": 1},
           "project_name": {"type": "string"},
-          "source": {"oneOf": [{"$ref": "#/components/schemas/FolderSource"}, {"$ref": "#/components/schemas/ZipSource"}]}
+          "source": {"oneOf": [{"$ref": "#/components/schemas/FolderSource"}, {"$ref": "#/components/schemas/ZipSource"}, {"$ref": "#/components/schemas/DirectorySource"}]}
         }
       },
       "ProjectAnalysis": {
@@ -627,7 +673,7 @@
       "Resume": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["resume_id", "candidate_id", "name", "role", "domain", "resume_text", "status", "claims", "project_ids", "created_at", "updated_at", "schema_version"],
+        "required": ["resume_id", "candidate_id", "name", "role", "domain", "resume_text", "status", "claims", "project_ids", "sort_order", "created_at", "updated_at", "schema_version"],
         "properties": {
           "resume_id": {"type": "string", "minLength": 1},
           "candidate_id": {"type": "string", "minLength": 1},
@@ -638,6 +684,7 @@
           "status": {"$ref": "#/components/schemas/ResumeStatus"},
           "claims": {"type": "array", "items": {"$ref": "#/components/schemas/ResumeClaim"}},
           "project_ids": {"type": "array", "maxItems": 20, "items": {"type": "integer", "minimum": 1}},
+          "sort_order": {"type": "integer", "minimum": 0},
           "created_at": {"type": "string"},
           "updated_at": {"type": "string"},
           "schema_version": {"const": 1}
@@ -646,7 +693,7 @@
       "ResumeSummary": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["resume_id", "candidate_id", "name", "role", "domain", "status", "claims_count", "project_ids", "project_names", "created_at", "updated_at"],
+        "required": ["resume_id", "candidate_id", "name", "role", "domain", "status", "claims_count", "project_ids", "project_names", "sort_order", "created_at", "updated_at"],
         "properties": {
           "resume_id": {"type": "string", "minLength": 1},
           "candidate_id": {"type": "string", "minLength": 1},
@@ -657,6 +704,7 @@
           "claims_count": {"type": "integer", "minimum": 0},
           "project_ids": {"type": "array", "items": {"type": "integer", "minimum": 1}},
           "project_names": {"type": "array", "items": {"type": "string"}},
+          "sort_order": {"type": "integer", "minimum": 0},
           "created_at": {"type": "string"},
           "updated_at": {"type": "string"}
         }
@@ -683,16 +731,46 @@
           "project_ids": {"type": "array", "maxItems": 20, "items": {"type": "integer", "minimum": 1}}
         }
       },
+      "UploadResumeRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["file_base64"],
+        "properties": {
+          "candidate_id": {"type": "string", "minLength": 1, "default": "default"},
+          "name": {"type": "string", "minLength": 1, "maxLength": 64},
+          "role": {"type": "string", "maxLength": 64},
+          "domain": {"type": "string", "maxLength": 64},
+          "file_base64": {"type": "string", "minLength": 1, "maxLength": 14000000}
+        }
+      },
       "UpdateResumeRequest": {
         "type": "object",
         "additionalProperties": false,
         "minProperties": 1,
         "properties": {
+          "name": {"type": "string", "minLength": 1, "maxLength": 64},
           "role": {"type": "string", "maxLength": 64},
           "domain": {"type": "string", "maxLength": 64},
           "status": {"$ref": "#/components/schemas/ResumeStatus"},
           "project_ids": {"type": "array", "maxItems": 20, "items": {"type": "integer", "minimum": 1}},
-          "claims": {"type": "array", "items": {"$ref": "#/components/schemas/ResumeClaimPatch"}}
+          "claims": {"type": "array", "items": {"$ref": "#/components/schemas/ResumeClaimPatch"}},
+          "file_base64": {"type": "string", "minLength": 1, "maxLength": 14000000}
+        }
+      },
+      "ReorderResumesRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["resume_ids"],
+        "properties": {
+          "resume_ids": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}}
+        }
+      },
+      "ReorderResumesResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["reordered"],
+        "properties": {
+          "reordered": {"type": "integer", "minimum": 1}
         }
       },
       "ResumeClaimPatch": {

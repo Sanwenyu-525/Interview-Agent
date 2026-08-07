@@ -11,7 +11,7 @@
 本项目的核心不是只面向 Java 的聊天面试助手，而是两层组合：
 
 - **Project Intelligence Engine**：把项目、代码、配置或未来的作品素材转换为带证据的 `UniversalProjectModel`。
-- **Domain Review Agent**：基于统一模型和候选人记忆，按技术面试、作品集评审或项目答辩等领域策略生成问题、评价和追问。
+- **Domain Review Agent**：基于统一模型和面试者记忆，按技术面试、作品集评审或项目答辩等领域策略生成问题、评价和追问。
 
 两层通过模型契约解耦：Analyzer 只回答“输入是什么、由什么组成、如何运作”；Review Policy 只回答“如何评审、问什么、如何根据回答决定下一步”。Java、Python、前端、视频和设计的差异不得渗入通用面试流程。
 
@@ -228,9 +228,9 @@ class ReviewPolicy(Protocol):
 
 ### 当前面试会话
 
-Session Store 持久化完整 `InterviewState` 和候选人归属。内存实现使用 `InMemorySessionStore`；SQLite 实现使用 `sessions` 表的 JSON `payload`、`candidate_id` 和整数 `version`。写入时可使用 expected version 做 CAS，冲突返回 `SessionConflictError`，避免两个请求覆盖同一回答。
+Session Store 持久化完整 `InterviewState` 和面试者归属。内存实现使用 `InMemorySessionStore`；SQLite 实现使用 `sessions` 表的 JSON `payload`、`candidate_id` 和整数 `version`。写入时可使用 expected version 做 CAS，冲突返回 `SessionConflictError`，避免两个请求覆盖同一回答。
 
-### 跨会话候选人画像
+### 跨会话面试者画像
 
 `CandidateProfileStore` 按非空 `candidate_id` 保存 `CandidateProfile`。每个 skill snapshot 当前包含：
 
@@ -254,7 +254,7 @@ Session Store 持久化完整 `InterviewState` 和候选人归属。内存实现
 }
 ```
 
-每个薄弱项只保留最近一次可追溯来源，避免与完整 Session History 重复增长。SQLite profile payload 的 `schema_version` 当前为 `2`；读取时兼容缺省版本 `0`、旧版本 `1` 和当前版本 `2`，拒绝未知版本。`save`、`update`、`merge`、`commit` 和条件恢复都会增加 profile version；Profile Store 还会在并发更新时使用事务/锁保护不同候选人的样本。
+每个薄弱项只保留最近一次可追溯来源，避免与完整 Session History 重复增长。SQLite profile payload 的 `schema_version` 当前为 `2`；读取时兼容缺省版本 `0`、旧版本 `1` 和当前版本 `2`，拒绝未知版本。`save`、`update`、`merge`、`commit` 和条件恢复都会增加 profile version；Profile Store 还会在并发更新时使用事务/锁保护不同面试者的样本。
 
 ## 7. HTTP API 与字段契约
 

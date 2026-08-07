@@ -19,8 +19,8 @@ test("chat workspace exposes keyboard-accessible left and right resize handles",
   assert.match(app, /className="workspace-resizer is-left"/);
   assert.match(app, /className="workspace-resizer is-right"/);
   assert.match(app, /role="separator"/);
-  assert.match(app, /onPointerDown=\{\(event\) => handleResizeStart\("left", event\)\}/);
-  assert.match(app, /onPointerDown=\{\(event\) => handleResizeStart\("right", event\)\}/);
+  assert.match(app, /\{\.\.\.leftResize\.handlers\}/);
+  assert.match(app, /\{\.\.\.rightResize\.handlers\}/);
   assert.match(css, /--context-rail-width/);
   assert.match(css, /--evidence-panel-width/);
   assert.match(css, /cursor:\s*col-resize/);
@@ -51,10 +51,9 @@ test("interactive controls expose keyboard focus and reduced-motion fallbacks", 
 });
 
 test("desktop layout uses the center workspace as the primary scroll container", () => {
-  assert.match(css, /\.sidebar\s*\{[^}]*overflow:\s*hidden;/s);
-  assert.match(app, /className="sidebar-body"/);
-  assert.match(css, /\.sidebar-body\s*\{[^}]*overflow-y:\s*auto;/s);
-  assert.match(css, /\.sidebar-footer\s*\{[^}]*border-top:/s);
+  assert.match(app, /<PrimarySidebar/);
+  assert.match(css, /\.stitch-primary-sidebar\s*\{[^}]*grid-column:\s*1;/s);
+  assert.match(css, /\.stitch-sidebar-footer\s*\{[^}]*border-top:/s);
   assert.match(css, /\.workspace\s*\{[^}]*overflow-y:\s*auto;/s);
   assert.match(css, /\.secondary-workspace\s*\{[^}]*grid-column:\s*2;/s);
 });

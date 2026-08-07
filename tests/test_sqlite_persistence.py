@@ -174,7 +174,7 @@ class SQLitePersistenceTests(unittest.TestCase):
             session_id, state = first_service.start_session(
                 11, review_mode=ReviewMode.DEFENSE_REVIEW
             )
-            first_service.submit_answer(session_id, "浣跨敤浜嬪姟淇濊瘉涓€鑷存€у苟鏀寔鍥炴粴")
+            first_service.submit_answer(session_id, "使用事务保证一致性并支持回滚")
 
             second_service = InterviewService(
                 repository=SQLiteProjectRepository(database),

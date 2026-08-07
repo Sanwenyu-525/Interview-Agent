@@ -623,7 +623,7 @@ class SQLiteSessionStore:
                 (session_id,),
             ).fetchone()
         if row is None:
-            raise KeyError(f"浼氳瘽涓嶅瓨鍦? {session_id}")
+            raise KeyError(f"会话不存在: {session_id}")
         payload = _session_payload(row[0])
         _validate_state_payload(payload)
         candidate_id = _session_candidate_id(payload, row[1])

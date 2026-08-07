@@ -4,7 +4,6 @@ import {
   ArrowUp,
   ArrowUpRight,
   BookmarkSimple,
-  CaretDown,
   CaretLeft,
   CaretRight,
   ChatCircleText,
@@ -21,13 +20,13 @@ import {
   Minus,
   Plus,
   ShieldWarning,
-  SlidersHorizontal,
   Sparkle,
   Square,
-  Timer,
   WarningCircle,
   X,
 } from "@phosphor-icons/react";
+import { useAutoDismiss } from "./useAutoDismiss.js";
+import usePanelResize from "./usePanelResize.js";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   activateLLMProfile,
@@ -44,6 +43,7 @@ import {
   getProjectStatus,
   getSessions,
   openProjectDirectory,
+  pickProjectDirectory,
   reusePromise,
   renameSession,
   saveLLMSettings,
@@ -65,7 +65,9 @@ import {
   SessionSetupView,
 } from "./StitchPages";
 import {
+  createDirectoryUploadDescriptor,
   createFolderUploadDescriptor,
+  folderNameFromPath,
   generateProjectId,
   normalizeProjectId,
   selectedFolderName,
@@ -552,6 +554,7 @@ async function loadInterviewSession(projectIdOverride = "", candidateIdOverride 
 
 function ProjectUploadControl({ onUploaded, onCreateTask = null, canCreateTask = false, workspaceName = "", initialError = "", initialCompletion = "", defaultOpen = false }) {
   const [files, setFiles] = useState([]);
+  const [directoryPath, setDirectoryPath] = useState("");
   const [projectName, setProjectName] = useState("");
   const [candidateId, setCandidateId] = useState(
     firstValue(import.meta.env?.VITE_CANDIDATE_ID, DEFAULT_CANDIDATE_ID),
@@ -563,6 +566,7 @@ function ProjectUploadControl({ onUploaded, onCreateTask = null, canCreateTask =
   const [uploadCompletion, setUploadCompletion] = useState(initialCompletion);
   const [isOpen, setIsOpen] = useState(Boolean(initialError || defaultOpen));
   const attachmentRef = useRef(null);
+  const isDesktop = Boolean(globalThis.__TAURI_INTERNALS__?.invoke);
 
   useEffect(() => {
     if (!isOpen) return undefined;
@@ -586,6 +590,7 @@ function ProjectUploadControl({ onUploaded, onCreateTask = null, canCreateTask =
   function handleFileChange(event) {
     const selectedFiles = Array.from(event.target.files || []);
     setFiles(selectedFiles);
+    setDirectoryPath("");
     setProjectName(selectedFolderName(selectedFiles));
     setUploadError("");
     setUploadCompletion("");
@@ -593,9 +598,29 @@ function ProjectUploadControl({ onUploaded, onCreateTask = null, canCreateTask =
     event.target.value = "";
   }
 
+  async function handlePickDirectory() {
+    if (isUploading) return;
+    try {
+      const selectedPath = await pickProjectDirectory();
+      if (!selectedPath) return;
+      setDirectoryPath(selectedPath);
+      setFiles([]);
+      setProjectName(folderNameFromPath(selectedPath));
+      setUploadError("");
+      setUploadCompletion("");
+      setIsOpen(true);
+    } catch (cause) {
+      setUploadError(errorMessage(cause));
+    }
+  }
+
   async function handleUpload(event) {
     event.preventDefault();
-    if (files.length === 0 || isUploading) {
+    if (isUploading) {
+      setUploadError("上传正在进行中，请稍候。");
+      return;
+    }
+    if (files.length === 0 && !directoryPath) {
       setUploadError("请先选择包含文本文件的项目目录。");
       return;
     }
@@ -607,7 +632,9 @@ function ProjectUploadControl({ onUploaded, onCreateTask = null, canCreateTask =
     setUploadError("");
     setUploadCompletion("");
     try {
-      const descriptor = await createFolderUploadDescriptor(files, { projectId, projectName });
+      const descriptor = directoryPath
+        ? createDirectoryUploadDescriptor(directoryPath, { projectId, projectName })
+        : await createFolderUploadDescriptor(files, { projectId, projectName });
       const skippedFiles = descriptor.source.skipped_files || [];
       setUploadPhase("uploading");
       await uploadProject(descriptor);
@@ -624,6 +651,7 @@ function ProjectUploadControl({ onUploaded, onCreateTask = null, canCreateTask =
       setUploadCompletion(completionMessage);
       setIsOpen(true);
       setFiles([]);
+      setDirectoryPath("");
       onUploaded(loaded, completionMessage);
     } catch (cause) {
       setUploadError(errorMessage(cause));
@@ -661,22 +689,33 @@ function ProjectUploadControl({ onUploaded, onCreateTask = null, canCreateTask =
             <button className="icon-button" type="button" aria-label="关闭附件菜单" onClick={() => setIsOpen(false)}><X size={17} /></button>
           </div>
           <div className="attachment-actions">
-            <label className="attachment-option">
-              <input
-                className="upload-input"
-                type="file"
-                webkitdirectory=""
-                multiple
-                disabled={isUploading}
-                onChange={handleFileChange}
-              />
-              <FolderSimple size={22} weight="duotone" />
-              <span>
-                <strong>{files.length ? `已选择 ${files.length} 个文件` : "选择文件夹作为工作区"}</strong>
-                <small>{files.length ? "可以重新选择目录" : "选择包含源码、配置和文档的文件夹"}</small>
-              </span>
-              <ArrowRight size={16} />
-            </label>
+            {isDesktop ? (
+              <button className="attachment-option" type="button" disabled={isUploading} onClick={handlePickDirectory}>
+                <FolderSimple size={22} weight="duotone" />
+                <span>
+                  <strong>{directoryPath ? folderNameFromPath(directoryPath) : "选择文件夹作为工作区"}</strong>
+                  <small>{directoryPath ? directoryPath : "通过系统对话框选择包含源码、配置和文档的文件夹"}</small>
+                </span>
+                <ArrowRight size={16} />
+              </button>
+            ) : (
+              <label className="attachment-option">
+                <input
+                  className="upload-input"
+                  type="file"
+                  webkitdirectory=""
+                  multiple
+                  disabled={isUploading}
+                  onChange={handleFileChange}
+                />
+                <FolderSimple size={22} weight="duotone" />
+                <span>
+                  <strong>{files.length ? `已选择 ${files.length} 个文件` : "选择文件夹作为工作区"}</strong>
+                  <small>{files.length ? "可以重新选择目录" : "选择包含源码、配置和文档的文件夹"}</small>
+                </span>
+                <ArrowRight size={16} />
+              </label>
+            )}
             <button className="attachment-option attachment-task-option" type="button" disabled={!canCreateTask || isUploading} onClick={() => { setIsOpen(false); onCreateTask?.(); }}>
               <ChatCircleText size={22} weight="duotone" />
               <span>
@@ -687,9 +726,9 @@ function ProjectUploadControl({ onUploaded, onCreateTask = null, canCreateTask =
             </button>
           </div>
           {uploadCompletion && <div className="upload-completion" role="status" aria-live="polite"><CheckCircle size={17} weight="fill" /><span>{uploadCompletion}</span></div>}
-          {files.length > 0 && (
+          {(files.length > 0 || directoryPath) && (
             <form className="attachment-form" onSubmit={handleUpload}>
-              <div className="attachment-selection"><FolderSimple size={18} /><span><strong>{projectName || "未命名项目"}</strong><small>{files.length} 个文件 · 单文件 10MB · 总计 100MB</small></span></div>
+              <div className="attachment-selection"><FolderSimple size={18} /><span><strong>{projectName || "未命名项目"}</strong><small>{directoryPath || `${files.length} 个文件`} · 单文件 10MB · 总计 100MB</small></span></div>
               <label className="upload-field">
                 <span>项目名称</span>
                 <input value={projectName} onChange={(event) => setProjectName(event.target.value)} placeholder="默认使用目录名称" />
@@ -703,7 +742,7 @@ function ProjectUploadControl({ onUploaded, onCreateTask = null, canCreateTask =
                 <small className="upload-mode-current">当前模式：{uploadModeLabel}</small>
               </div>
               <label className="upload-field">
-                <span>候选人 ID</span>
+                <span>面试者 ID</span>
                 <input value={candidateId} onChange={(event) => setCandidateId(event.target.value)} placeholder={DEFAULT_CANDIDATE_ID} />
               </label>
               {isUploading && (
@@ -713,15 +752,15 @@ function ProjectUploadControl({ onUploaded, onCreateTask = null, canCreateTask =
                   <span className="upload-progress-step">{currentUploadStep} / {UPLOAD_STEP_LABELS.length}</span>
                 </div>
               )}
-              {isUploading && <div className="upload-steps" aria-label="椤圭洰涓婁紶杩涘害">{UPLOAD_STEP_LABELS.map((label, index) => <span className={currentUploadStep > index + 1 ? "is-done" : currentUploadStep === index + 1 ? "is-current" : ""} key={label}>{index + 1}. {label}</span>)}</div>}
+              {isUploading && <div className="upload-steps" aria-label="项目上传进度">{UPLOAD_STEP_LABELS.map((label, index) => <span className={currentUploadStep > index + 1 ? "is-done" : currentUploadStep === index + 1 ? "is-current" : ""} key={label}>{index + 1}. {label}</span>)}</div>}
               {uploadError && <div className="form-error"><WarningCircle size={17} /> {uploadError}</div>}
               <button className="primary-button attachment-submit" type="submit" disabled={isUploading}>
                 {isUploading ? `${uploadModeLabel}：读取并分析中...` : `${uploadModeLabel}并开始面试`} <ArrowRight size={18} weight="bold" />
               </button>
             </form>
           )}
-          {uploadError && files.length === 0 && <div className="form-error"><WarningCircle size={17} /> {uploadError}</div>}
-          <p className="upload-note">支持 UTF-8 文本文件；ZIP、multipart 和二进制文件仍不在浏览器上传范围内。</p>
+          {uploadError && files.length === 0 && !directoryPath && <div className="form-error"><WarningCircle size={17} /> {uploadError}</div>}
+          <p className="upload-note">{isDesktop ? "服务端直接读取所选目录中的 UTF-8 文本文件，二进制文件自动忽略；限制与浏览器上传一致。" : "支持 UTF-8 文本文件；ZIP、multipart 和二进制文件仍不在浏览器上传范围内。"}</p>
         </div>
       )}
     </div>
@@ -729,8 +768,6 @@ function ProjectUploadControl({ onUploaded, onCreateTask = null, canCreateTask =
 }
 
 function EmptyInterviewView({ onUploaded, initialError }) {
-  const history = [];
-
   return (
     <section className="workspace empty-workspace" aria-label="面试工作台">
       <header className="workspace-header">
@@ -741,18 +778,6 @@ function EmptyInterviewView({ onUploaded, initialError }) {
         <div className="agent-thread">
           <div className="agent-thread-heading"><span className="agent-avatar"><Sparkle size={17} weight="duotone" /></span><span><strong>Interview Agent</strong><small>项目理解与面试教练</small></span><span className="thread-state">等待项目上下文</span></div>
                      <div className="agent-message-list">
-                       {history.map((record, index) => (
-                         <div className="history-pair" key={`${record.question || "question"}-${index}`}>
-                           <article className="agent-message agent-message-agent history-message">
-                             <span className="agent-avatar"><Sparkle size={17} weight="duotone" /></span>
-                             <div className="agent-message-body"><span className="message-meta">面试官 · 第 {index + 1} 题</span><div className="message-bubble history-question-bubble"><p>{record.question || "历史问题"}</p></div></div>
-                           </article>
-                           <article className="agent-message agent-message-user history-message">
-                             <span className="agent-avatar user-avatar">你</span>
-                             <div className="agent-message-body"><span className="message-meta">你的回答 · 已提交</span><div className="message-bubble user-message-bubble"><p>{record.answer || "未填写回答"}</p>{record.evaluation?.score !== undefined && <small className="message-score">评分 {record.evaluation.score} / 100</small>}</div></div>
-                           </article>
-                         </div>
-                       ))}
                        <article className="agent-message agent-message-agent">
               <span className="agent-avatar"><Sparkle size={17} weight="duotone" /></span>
               <div className="agent-message-body"><span className="message-meta">Interview Agent · 现在</span><div className="message-bubble"><p>你好，我会先理解你的项目结构、技术选择和关键流程，再围绕真实证据开始面试。</p><p>从输入框左侧的 <strong>+</strong> 添加项目目录即可。</p></div></div>
@@ -778,7 +803,6 @@ function InterviewComposer({ answer = "", setAnswer = () => {}, onKeyDown, onSub
         </div>
       </div>
       {error && <div className="form-error"><WarningCircle size={17} /> {error}</div>}
-      <div className="submit-note">Enter 换行 · Ctrl / ⌘ + Enter 提交 · 项目上传入口在左侧 +</div>
     </div>
   );
 }
@@ -1279,19 +1303,18 @@ function App() {
   const [isEvidenceCollapsed, setIsEvidenceCollapsed] = useState(false);
   const [contextRailWidth, setContextRailWidth] = useState(defaultContextRailWidth);
   const [evidencePanelWidth, setEvidencePanelWidth] = useState(defaultEvidencePanelWidth);
-  const [resizingSide, setResizingSide] = useState("");
   const [isRubricOpen, setIsRubricOpen] = useState(false);
   const [isQuestionMarked, setIsQuestionMarked] = useState(false);
   const [isMoreMenuOpen, setIsMoreMenuOpen] = useState(false);
   const [selectedStructureItem, setSelectedStructureItem] = useState("");
-  const [interactionNotice, setInteractionNotice] = useState("");
+  const [interactionNotice, showInteractionNotice] = useAutoDismiss();
   const [llmSettings, setLlmSettings] = useState(null);
   const [llmProfiles, setLlmProfiles] = useState({ active_id: null, profiles: [] });
   const [isLLMProfilesLoading, setIsLLMProfilesLoading] = useState(true);
   const [isLLMSettingsLoading, setIsLLMSettingsLoading] = useState(true);
   const [isLLMSettingsSaving, setIsLLMSettingsSaving] = useState(false);
   const [isLLMSettingsTesting, setIsLLMSettingsTesting] = useState(false);
-  const [llmSettingsNotice, setLlmSettingsNotice] = useState("");
+  const [llmSettingsNotice, showLlmSettingsNotice] = useAutoDismiss();
   const [llmSettingsError, setLlmSettingsError] = useState("");
   const [sessionReport, setSessionReport] = useState(null);
   const [reportFocusIndex, setReportFocusIndex] = useState(null);
@@ -1302,7 +1325,6 @@ function App() {
   const [candidateProfileError, setCandidateProfileError] = useState("");
   const startupPromiseRef = useRef(null);
   const moreMenuRef = useRef(null);
-  const resizeRef = useRef(null);
 
   function adoptLoadedSession(loaded) {
     if (loaded.needsUpload) {
@@ -1471,53 +1493,22 @@ function App() {
     return Math.max(minimum, Math.min(maximum, available));
   }
 
-  function setPanelWidth(side, value) {
-    const minimum = side === "left" ? MIN_CONTEXT_RAIL_WIDTH : MIN_EVIDENCE_PANEL_WIDTH;
-    const nextWidth = Math.max(minimum, Math.min(resizeLimit(side), Math.round(value)));
-    if (side === "left") setContextRailWidth(nextWidth);
-    else setEvidencePanelWidth(nextWidth);
-  }
-
-  function handleResizeStart(side, event) {
-    if (event.button !== 0) return;
-    event.preventDefault();
-    event.currentTarget.focus();
-    event.currentTarget.setPointerCapture?.(event.pointerId);
-    resizeRef.current = {
-      side,
-      pointerId: event.pointerId,
-      startX: event.clientX,
-      startWidth: side === "left" ? contextRailWidth : evidencePanelWidth,
-    };
-    setResizingSide(side);
-  }
-
-  function handleResizeMove(event) {
-    const drag = resizeRef.current;
-    if (!drag || drag.pointerId !== event.pointerId) return;
-    const delta = event.clientX - drag.startX;
-    setPanelWidth(drag.side, drag.startWidth + (drag.side === "left" ? delta : -delta));
-  }
-
-  function handleResizeEnd(event) {
-    const drag = resizeRef.current;
-    if (!drag || drag.pointerId !== event.pointerId) return;
-    resizeRef.current = null;
-    setResizingSide("");
-  }
-
-  function handleResizeKeyDown(side, event) {
-    if (!['ArrowLeft', 'ArrowRight'].includes(event.key)) return;
-    event.preventDefault();
-    const physicalDelta = event.key === "ArrowRight" ? 8 : -8;
-    const currentWidth = side === "left" ? contextRailWidth : evidencePanelWidth;
-    setPanelWidth(side, currentWidth + (side === "left" ? physicalDelta : -physicalDelta));
-  }
-
-  function resetPanelWidth(side) {
-    if (side === "left") setContextRailWidth(defaultContextRailWidth());
-    else setEvidencePanelWidth(defaultEvidencePanelWidth());
-  }
+  const leftResize = usePanelResize({
+    value: contextRailWidth,
+    onChange: (width) => setContextRailWidth(Math.max(MIN_CONTEXT_RAIL_WIDTH, Math.min(resizeLimit("left"), Math.round(width)))),
+    min: MIN_CONTEXT_RAIL_WIDTH,
+    max: MAX_CONTEXT_RAIL_WIDTH,
+    direction: 1,
+    onReset: () => setContextRailWidth(defaultContextRailWidth()),
+  });
+  const rightResize = usePanelResize({
+    value: evidencePanelWidth,
+    onChange: (width) => setEvidencePanelWidth(Math.max(MIN_EVIDENCE_PANEL_WIDTH, Math.min(resizeLimit("right"), Math.round(width)))),
+    min: MIN_EVIDENCE_PANEL_WIDTH,
+    max: MAX_EVIDENCE_PANEL_WIDTH,
+    direction: -1,
+    onReset: () => setEvidencePanelWidth(defaultEvidencePanelWidth()),
+  });
 
   function handleEvidenceToggle() {
     if (globalThis.matchMedia?.("(max-width: 980px)").matches) {
@@ -1538,7 +1529,7 @@ function App() {
   function handleToggleQuestionMark() {
     setIsMoreMenuOpen(false);
     setIsQuestionMarked((marked) => {
-      setInteractionNotice(marked ? "已取消当前问题的标记。" : "已标记当前问题。 ");
+      showInteractionNotice(marked ? "已取消当前问题的标记。" : "已标记当前问题。 ");
       return !marked;
     });
   }
@@ -1548,7 +1539,7 @@ function App() {
     setSelectedStructureItem(child);
     setActiveView("interview");
     if (child === session.topic) {
-      setInteractionNotice("");
+      showInteractionNotice("");
       return;
     }
     const created = await handleCreateReviewSession({
@@ -1614,12 +1605,12 @@ function App() {
   async function handleCompleteSession() {
     if (!session?.sessionId || isCompletingSession) return;
     if (history.length === 0) {
-      setInteractionNotice("至少完成一次回答后才能结束会话。");
+      showInteractionNotice("至少完成一次回答后才能结束会话。");
       return;
     }
     setIsCompletingSession(true);
     setIsMoreMenuOpen(false);
-    setInteractionNotice("");
+    showInteractionNotice("");
     try {
       const result = await completeSession(session.sessionId);
       const state = result.state || {};
@@ -1634,12 +1625,12 @@ function App() {
         setTasks(nextTasks);
         saveStoredTasks(projectId, nextTasks);
       } catch {
-        setInteractionNotice("会话已结束；历史列表将在下次刷新时更新。");
+        showInteractionNotice("会话已结束；历史列表将在下次刷新时更新。");
       }
       setReportFocusIndex(null);
       setActiveView("report");
     } catch (cause) {
-      setInteractionNotice(`结束会话失败：${errorMessage(cause)}`);
+      showInteractionNotice(`结束会话失败：${errorMessage(cause)}`, { persist: true });
     } finally {
       setIsCompletingSession(false);
     }
@@ -1659,18 +1650,18 @@ function App() {
 
   async function handleSelectTask(task) {
     if (!task?.id || task.id === session?.sessionId) return;
-    setInteractionNotice("");
+    showInteractionNotice("");
     try {
       const result = await getSession(task.id);
       adoptTaskSession(task.id, result.state || {});
     } catch (cause) {
-      setInteractionNotice(`无法打开任务“${task.name}”：${errorMessage(cause)}`);
+      showInteractionNotice(`无法打开任务“${task.name}”：${errorMessage(cause)}`, { persist: true });
     }
   }
 
   async function handleRenameTask(task, title) {
     setBusyTaskId(task.id);
-    setInteractionNotice("");
+    showInteractionNotice("");
     try {
       const result = await renameSession(task.id, title);
       const renamedTitle = result.state?.title || title;
@@ -1682,10 +1673,10 @@ function App() {
       if (task.id === session.sessionId) {
         setSession(toUiSession(task.id, result.state || {}, session.project, session.status));
       }
-      setInteractionNotice(`会话已重命名为“${renamedTitle}”。`);
+      showInteractionNotice(`会话已重命名为“${renamedTitle}”。`);
       return true;
     } catch (cause) {
-      setInteractionNotice(`重命名失败：${errorMessage(cause)}`);
+      showInteractionNotice(`重命名失败：${errorMessage(cause)}`, { persist: true });
       return false;
     } finally {
       setBusyTaskId("");
@@ -1694,7 +1685,7 @@ function App() {
 
   async function handleDeleteTask(task) {
     setBusyTaskId(task.id);
-    setInteractionNotice("");
+    showInteractionNotice("");
     try {
       await deleteSession(task.id);
       const nextTasks = tasks.filter((item) => item.id !== task.id);
@@ -1718,10 +1709,10 @@ function App() {
           setActiveView("session-new");
         }
       }
-      setInteractionNotice(`已删除会话“${task.name}”。`);
+      showInteractionNotice(`已删除会话“${task.name}”。`);
       return true;
     } catch (cause) {
-      setInteractionNotice(`删除失败：${errorMessage(cause)}`);
+      showInteractionNotice(`删除失败：${errorMessage(cause)}`, { persist: true });
       return false;
     } finally {
       setBusyTaskId("");
@@ -1762,7 +1753,7 @@ function App() {
   function handleCreateTask() {
     if (!sessionProjectId(session)) return;
     setActiveView("session-new");
-    setInteractionNotice("");
+    showInteractionNotice("");
   }
 
   async function handlePositionPractice(position, question) {
@@ -1805,7 +1796,7 @@ function App() {
     const projectId = sessionProjectId(session);
     if (!projectId || isCreatingTask) return;
     setIsCreatingTask(true);
-    setInteractionNotice(topic ? `正在为主题“${topic}”创建新会话…` : "");
+    showInteractionNotice(topic ? `正在为主题“${topic}”创建新会话…` : "", { persist: true });
     try {
       const defaultTitle = title || `任务 ${tasks.length + 1}`;
       const created = await startInterviewSession(projectId, candidateId, reviewMode, defaultTitle, topic);
@@ -1819,12 +1810,12 @@ function App() {
       setTasks(nextTasks);
       saveStoredTasks(projectId, nextTasks);
       adoptTaskSession(created.sessionId, state);
-      setInteractionNotice(topic
+      showInteractionNotice(topic
         ? `已为主题“${topic}”创建新会话。`
         : `已在“${workspaceMeta.name || "当前工作区"}”创建${nextTask.name}。`);
       return true;
     } catch (cause) {
-      setInteractionNotice(`${topic ? "切换主题" : "新建任务"}失败：${errorMessage(cause)}`);
+      showInteractionNotice(`${topic ? "切换主题" : "新建任务"}失败：${errorMessage(cause)}`, { persist: true });
       return false;
     } finally {
       setIsCreatingTask(false);
@@ -1833,12 +1824,12 @@ function App() {
 
   async function handleSaveLLMSettings(payload) {
     setIsLLMSettingsSaving(true);
-    setLlmSettingsNotice("");
+    showLlmSettingsNotice("");
     setLlmSettingsError("");
     try {
       const saved = await saveLLMSettings(payload);
       setLlmSettings(saved);
-      setLlmSettingsNotice("大模型配置已保存，当前后端已切换。 ");
+      showLlmSettingsNotice("大模型配置已保存，当前后端已切换。 ");
     } catch (cause) {
       setLlmSettingsError(`保存失败：${errorMessage(cause)}`);
     } finally {
@@ -1848,11 +1839,11 @@ function App() {
 
   async function handleTestLLMConnection(payload) {
     setIsLLMSettingsTesting(true);
-    setLlmSettingsNotice("");
+    showLlmSettingsNotice("");
     setLlmSettingsError("");
     try {
       const result = await testLLMConnection(payload);
-      setLlmSettingsNotice(result.message || "连接测试成功。 ");
+      showLlmSettingsNotice(result.message || "连接测试成功。 ");
     } catch (cause) {
       setLlmSettingsError(`连接测试失败：${errorMessage(cause)}`);
     } finally {
@@ -1868,12 +1859,12 @@ function App() {
 
   async function handleCreateLLMProfile(payload) {
     setIsLLMSettingsSaving(true);
-    setLlmSettingsNotice("");
+    showLlmSettingsNotice("");
     setLlmSettingsError("");
     try {
       const created = await createLLMProfile(payload);
       await refreshLLMProfiles();
-      setLlmSettingsNotice("大模型配置档案已新增。 ");
+      showLlmSettingsNotice("大模型配置档案已新增。 ");
       return created;
     } catch (cause) {
       setLlmSettingsError(`新增失败：${errorMessage(cause)}`);
@@ -1885,13 +1876,13 @@ function App() {
 
   async function handleUpdateLLMProfile(profileId, payload) {
     setIsLLMSettingsSaving(true);
-    setLlmSettingsNotice("");
+    showLlmSettingsNotice("");
     setLlmSettingsError("");
     try {
       const updated = await updateLLMProfile(profileId, payload);
       await refreshLLMProfiles();
       if (updated.active) setLlmSettings(updated);
-      setLlmSettingsNotice("大模型配置档案已更新。 ");
+      showLlmSettingsNotice("大模型配置档案已更新。 ");
       return updated;
     } catch (cause) {
       setLlmSettingsError(`更新失败：${errorMessage(cause)}`);
@@ -1903,13 +1894,13 @@ function App() {
 
   async function handleActivateLLMProfile(profileId) {
     setIsLLMSettingsSaving(true);
-    setLlmSettingsNotice("");
+    showLlmSettingsNotice("");
     setLlmSettingsError("");
     try {
       const active = await activateLLMProfile(profileId);
       setLlmSettings(active);
       await refreshLLMProfiles();
-      setLlmSettingsNotice("已切换当前使用的大模型。 ");
+      showLlmSettingsNotice("已切换当前使用的大模型。 ");
       return active;
     } catch (cause) {
       setLlmSettingsError(`切换失败：${errorMessage(cause)}`);
@@ -1921,13 +1912,13 @@ function App() {
 
   async function handleDeleteLLMProfile(profileId) {
     setIsLLMSettingsSaving(true);
-    setLlmSettingsNotice("");
+    showLlmSettingsNotice("");
     setLlmSettingsError("");
     try {
       const result = await deleteLLMProfile(profileId);
       setLlmProfiles(result);
       setLlmSettings(await getLLMSettings());
-      setLlmSettingsNotice("大模型配置档案已删除。 ");
+      showLlmSettingsNotice("大模型配置档案已删除。 ");
       return result;
     } catch (cause) {
       setLlmSettingsError(`删除失败：${errorMessage(cause)}`);
@@ -1939,7 +1930,7 @@ function App() {
 
   async function handleTestLLMProfile(profileId) {
     setIsLLMSettingsTesting(true);
-    setLlmSettingsNotice("");
+    showLlmSettingsNotice("");
     setLlmSettingsError("");
     try {
       const result = await testLLMProfile(profileId);
@@ -1997,52 +1988,21 @@ function App() {
   return (
     <AppWindow>
       <main
-        className={`app-shell stitch-shell view-${activeView} ${needsUpload ? "is-empty-project" : ""} ${isEvidenceCollapsed ? "is-evidence-collapsed" : ""} ${resizingSide ? "is-resizing" : ""}`}
+        className={`app-shell stitch-shell view-${activeView} ${needsUpload ? "is-empty-project" : ""} ${isEvidenceCollapsed ? "is-evidence-collapsed" : ""} ${leftResize.resizing || rightResize.resizing ? "is-resizing" : ""}`}
         style={{
           "--context-rail-width": `${contextRailWidth}px`,
           "--evidence-panel-width": isEvidenceCollapsed ? "40px" : `${evidencePanelWidth}px`,
         }}
       >
       <PrimarySidebar activeView={activeView} onNavigate={handlePrimaryNavigation} onNewSession={handleCreateTask} hasProject={Boolean(sessionProjectId(session))} />
-      <aside className="sidebar legacy-sidebar" aria-hidden="true">
-        <div className="brand-block"><div className="brand-mark"><Sparkle size={16} weight="duotone" /></div><div><div className="brand-name">Interview Agent</div><div className="brand-subtitle">Evidence-first Interview Studio</div></div></div>
-        <nav className="app-nav" aria-label="应用导航">
-          <button className={`app-nav-item ${activeView === "interview" ? "is-active" : ""}`} type="button" onClick={() => setActiveView("interview")}><ListBullets size={17} weight="duotone" /><span>面试工作台</span></button>
-          <button className={`app-nav-item ${activeView === "project" ? "is-active" : ""}`} type="button" onClick={() => setActiveView("project")}><FolderSimple size={17} weight="duotone" /><span>项目资料</span></button>
-          <button className={`app-nav-item ${activeView === "settings" ? "is-active" : ""}`} type="button" onClick={() => setActiveView("settings")}><GearSix size={17} weight="duotone" /><span>应用设置</span></button>
-        </nav>
-        <div className="sidebar-body">
-          <div className="workspace-status"><span className="status-dot" /><span>项目工作区</span><span className="status-connected">{session.status?.analysis_status || "API 状态"}</span></div>
-          <div className="sidebar-section workspace-task-section">
-            <div className="eyebrow">当前工作区</div>
-            <div className="workspace-summary"><FolderSimple size={18} weight="duotone" /><span><strong>{workspaceMeta.name || session.projectName || "未命名工作区"}</strong><small>{workspaceMeta.path || "通过 + 选择一个文件夹"}</small></span></div>
-            <div className="task-list-heading"><span>任务 <small>{tasks.length}</small></span><button className="task-add-button" type="button" aria-label="新建任务" onClick={handleCreateTask} disabled={!sessionProjectId(session) || isCreatingTask}>{isCreatingTask ? <span className="task-add-spinner" /> : <Plus size={15} weight="bold" />}</button></div>
-            <div className="task-list" aria-label="工作区任务">
-              {tasks.length === 0 ? <div className="task-empty">选择工作区后创建第一个任务</div> : tasks.map((task, index) => <button className={`task-item ${task.id === session.sessionId ? "is-active" : ""}`} type="button" key={task.id} onClick={() => handleSelectTask(task)}><span className="task-index">{String(index + 1).padStart(2, "0")}</span><span className="task-item-copy"><strong>{task.name}</strong><small>{task.id === session.sessionId ? "当前会话" : "打开会话"}</small></span><ArrowRight size={14} /></button>)}
-            </div>
-          </div>
-          <div className="sidebar-section project-section">
-            <div className="eyebrow">当前项目</div>
-            <button className="project-picker" type="button" onClick={() => setActiveView("project")}><FolderSimple size={21} weight="duotone" /><span><strong>{session.projectName || "未命名项目"}</strong><small>{session.projectMeta || "暂无项目元信息"}</small></span><CaretDown size={16} /></button>
-            <div className="progress-label"><span>项目进度</span><strong>{session.progress === "" ? "—" : session.progress} / {session.totalQuestions === "" ? "—" : session.totalQuestions}</strong></div>
-            <div className="progress-track" aria-label={`项目进度 ${questionProgress}%`}><span style={{ width: `${questionProgress}%` }} /></div>
-          </div>
-          <div className="sidebar-section structure-section">
-            <div className="eyebrow">面试结构</div>
-            {structure.length === 0 ? <div className="empty-state">暂无项目知识</div> : <div className="structure-list">{structure.map((item) => <div className={`structure-item ${item.active ? "is-active" : ""}`} key={item.label}><div className="structure-row"><span className={`step-dot ${item.active ? "is-current" : ""}`}>{item.active ? "•" : ""}</span><span className="structure-label">{item.label}</span></div>{item.children && <div className="structure-children">{item.children.map((child) => { const isSelected = selectedStructureItem === child || (!selectedStructureItem && session.topic === child); return <button className={`child-item ${isSelected ? "is-selected" : ""}`} type="button" aria-current={isSelected ? "step" : undefined} onClick={() => handleStructureSelection(child)} key={child}>{child}</button>; })}</div>}</div>)}</div>}
-          </div>
-        </div>
-        <div className="sidebar-footer"><button className="quiet-button" type="button" onClick={() => setActiveView("settings")}><SlidersHorizontal size={18} /> 面试设置</button><div className="time-spent"><Timer size={19} /><span>由会话状态提供</span></div></div>
-      </aside>
-
       {activeView === "interview" ? (
         needsUpload ? (
           <EmptyInterviewView onUploaded={handleUploaded} initialError={startupUploadError} />
         ) : (
           <>
               <InterviewContextRail workspace={workspaceMeta} session={session} tasks={tasks} structure={structure} progress={questionProgress} selectedItem={selectedStructureItem} onSelectTask={handleSelectTask} onSelectStructure={handleStructureSelection} onNewSession={handleCreateTask} onRenameTask={handleRenameTask} onDeleteTask={handleDeleteTask} busyTaskId={busyTaskId} isCreatingSession={isCreatingTask} />
-              <div className="workspace-resizer is-left" role="separator" aria-label="调整面试结构宽度" aria-orientation="vertical" aria-valuemin={MIN_CONTEXT_RAIL_WIDTH} aria-valuemax={MAX_CONTEXT_RAIL_WIDTH} aria-valuenow={contextRailWidth} tabIndex={0} onPointerDown={(event) => handleResizeStart("left", event)} onPointerMove={handleResizeMove} onPointerUp={handleResizeEnd} onPointerCancel={handleResizeEnd} onDoubleClick={() => resetPanelWidth("left")} onKeyDown={(event) => handleResizeKeyDown("left", event)} />
               <section className="workspace interview-workspace" aria-label="面试工作台">
+                <div className="workspace-resizer is-left" role="separator" aria-label="调整面试结构宽度" aria-orientation="vertical" aria-valuemin={MIN_CONTEXT_RAIL_WIDTH} aria-valuemax={MAX_CONTEXT_RAIL_WIDTH} aria-valuenow={contextRailWidth} tabIndex={0} {...leftResize.handlers} />
                 <header className="workspace-header">
                   <div className="question-breadcrumb"><button className="icon-button" aria-label="返回项目资料" type="button" onClick={handleBackToProject}><ArrowRight size={17} className="back-icon" /></button><span>{session.questionNumber || "当前问题"} {session.topic && `问题：${session.topic}`}</span></div>
                   <div className="header-actions">
@@ -2102,9 +2062,9 @@ function App() {
                   <InterviewComposer answer={answer} setAnswer={setAnswer} onKeyDown={handleKeyDown} onSubmit={handleSubmit} isSubmitting={isSubmitting} error={error} onUploaded={handleUploaded} onCreateTask={handleCreateTask} canCreateTask={Boolean(sessionProjectId(session))} workspaceName={workspaceMeta.name} initialCompletion={uploadCompletion} />
                 )}
              </div>
+                {!isEvidenceCollapsed && <div className="workspace-resizer is-right" role="separator" aria-label="调整证据面板宽度" aria-orientation="vertical" aria-valuemin={MIN_EVIDENCE_PANEL_WIDTH} aria-valuemax={MAX_EVIDENCE_PANEL_WIDTH} aria-valuenow={evidencePanelWidth} tabIndex={0} {...rightResize.handlers} />}
           </section>
 
-          {!isEvidenceCollapsed && <div className="workspace-resizer is-right" role="separator" aria-label="调整证据面板宽度" aria-orientation="vertical" aria-valuemin={MIN_EVIDENCE_PANEL_WIDTH} aria-valuemax={MAX_EVIDENCE_PANEL_WIDTH} aria-valuenow={evidencePanelWidth} tabIndex={0} onPointerDown={(event) => handleResizeStart("right", event)} onPointerMove={handleResizeMove} onPointerUp={handleResizeEnd} onPointerCancel={handleResizeEnd} onDoubleClick={() => resetPanelWidth("right")} onKeyDown={(event) => handleResizeKeyDown("right", event)} />}
           <aside id="evidence-drawer" className={`evidence-panel ${isEvidenceOpen ? "is-open" : ""} ${isEvidenceCollapsed ? "is-collapsed" : ""}`} aria-label="项目证据和当前评估">
             <button className="evidence-expand-button" type="button" aria-label="展开证据面板" onClick={() => setIsEvidenceCollapsed(false)}><CaretLeft size={17} /><span>证据</span></button>
             <div className="panel-header"><h2>证据 <span>（{session.evidenceIds.length}）</span></h2><div className="panel-header-actions">{confidenceLabel(session.evidence.confidence) && <span className="confidence-badge">置信度 {confidenceLabel(session.evidence.confidence)}</span>}<button className="text-button" type="button" onClick={handleOpenProjectKnowledge}>查看全部 <ArrowRight size={15} /></button><button className="icon-button evidence-collapse-button" type="button" aria-label="收起证据面板" onClick={() => setIsEvidenceCollapsed(true)}><CaretRight size={18} /></button><button className="icon-button evidence-close-button" type="button" aria-label="关闭证据面板" onClick={() => { setIsEvidenceOpen(false); setIsRubricOpen(false); }}><X size={18} /></button></div></div>

@@ -2,6 +2,7 @@
 
 from .service import IngestionResult, IngestionService
 from .sources import (
+    DirectorySource,
     FolderFile,
     FolderSource,
     ProjectSource,
@@ -13,6 +14,7 @@ from .sources import (
 from .workspace import Workspace, WorkspaceManager
 
 __all__ = [
+    "DirectorySource",
     "FolderFile",
     "FolderSource",
     "IngestionResult",

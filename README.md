@@ -2,7 +2,7 @@
 
 ## Agent 工作流框架
 
-当前面试工作流已接入 LangGraph `StateGraph`。`InterviewGraph` 负责路由开始会话和提交回答两个入口，具体的问题生成、评价、Review Policy 和候选人画像逻辑仍由现有领域代码提供。
+当前面试工作流已接入 LangGraph `StateGraph`。`InterviewGraph` 负责路由开始会话和提交回答两个入口，具体的问题生成、评价、Review Policy 和面试者画像逻辑仍由现有领域代码提供。
 
 开始面试路径依次经过 `load_project`、`select_initial_topic`、`generate_initial_question` 和 `assemble_initial_state`；提交回答路径依次经过 `validate_answer`、`evaluate_answer`、`update_profile`、`decide_follow_up`、`generate_follow_up_question` 和 `assemble_follow_up`。节点只计算结果，数据库写入和失败回滚仍由 `InterviewService` 负责。
 
@@ -75,11 +75,11 @@ Stitch 七张产品页面现已全部重构进主应用；当前覆盖状态、�
 - `POST /projects/upload`：上传并分析 `folder` 或 `zip` 描述。`folder` 使用 `{ "files": [{ "path": "...", "content": "..." }] }`；`zip` 使用服务进程可访问的 `{ "source_path": "..." }`，并可选传入 `max_total_size`、`max_file_size`、`max_files`。
 - `GET /projects/{project_id}/status`：返回 `ProjectAnalysis`，包括 `analysis_status`、`schema_version`、`analyzer_id`、`universal_model`、`knowledge` 和 `error`。
 - `GET /projects/{project_id}/knowledge`：返回供面试流程使用的 `ProjectKnowledge` 兼容模型。
-- `GET /positions`、`POST /positions`：按候选人列出或创建目标岗位。创建请求包含岗位名称、JD 原文，以及可选的公司、来源链接和关联项目 ID；服务端保存 JD、提取任职要求并生成岗位题库。
+- `GET /positions`、`POST /positions`：按面试者列出或创建目标岗位。创建请求包含岗位名称、JD 原文，以及可选的公司、来源链接和关联项目 ID；服务端保存 JD、提取任职要求并生成岗位题库。
 - `GET /positions/{position_id}`、`PATCH /positions/{position_id}`、`DELETE /positions/{position_id}`：读取、更新或删除一个目标岗位；岗位状态支持 `preparing`、`applied`、`interviewing` 和 `archived`。
 - `POST /positions/{position_id}/questions`：基于最新 JD 和关联项目重新生成岗位题库。只有同时匹配项目内容和具体证据的题目才标记为项目证据题，否则生成经历题。
-- `GET /resumes`：按可选的 `candidate_id` 过滤并列出简历库摘要（姓名、岗位、领域、状态、主张数量、关联项目名）；不传 `candidate_id` 时返回简历库全部简历，供“新建复盘”选择候选人使用。
-- `POST /resumes`：body 为 `{ "name": "...", "role": "...", "domain": "...", "resume_text": "...", "project_ids": [...] }`，保存简历原文、提取候选人主张并返回详情；`name` 缺省时尝试从正文首行识别。
+- `GET /resumes`：按可选的 `candidate_id` 过滤并列出简历库摘要（姓名、岗位、领域、状态、主张数量、关联项目名）；不传 `candidate_id` 时返回简历库全部简历，供“新建复盘”选择面试者使用。
+- `POST /resumes`：body 为 `{ "name": "...", "role": "...", "domain": "...", "resume_text": "...", "project_ids": [...] }`，保存简历原文、提取面试者主张并返回详情；`name` 缺省时尝试从正文首行识别。
 - `GET /resumes/{resume_id}`：读取简历详情（含提取的主张列表）。
 - `PATCH /resumes/{resume_id}`：更新岗位、领域、关联项目、状态，或通过 `claims` 数组切换单条主张的 `skip` 标记。
 - `DELETE /resumes/{resume_id}`：从简历库删除简历。
@@ -92,7 +92,7 @@ Stitch 七张产品页面现已全部重构进主应用；当前覆盖状态、�
 - `GET /sessions/{session_id}/report`：读取由后端聚合的会话复盘报告。
 - `POST /sessions/{session_id}/answers`：body 为 `{ "answer": "..." }`，返回新的问题、评价、追问方向和历史。
 - `POST /sessions/{session_id}/answers/stream`：同样提交回答，但使用 SSE 流式返回评价阶段、非满分参考回答片段和最终会话状态；只有评分达到 100 才不生成参考回答。
-- `GET /candidates/{candidate_id}/profile`：读取跨会话持久化的候选人能力画像；薄弱项可通过 `weakness_sources` 回溯来源会话、问题序号和证据 ID。
+- `GET /candidates/{candidate_id}/profile`：读取跨会话持久化的面试者能力画像；薄弱项可通过 `weakness_sources` 回溯来源会话、问题序号和证据 ID。
 
 项目分析状态为 `CREATED`、`SOURCE_READY`、`SCANNING`、`ANALYZING`、`READY` 或 `FAILED`。当前默认使用工作区内的 `interview-agent.db`；设置 `INTERVIEW_AGENT_DB` 可以切换 SQLite 文件。未传数据库的嵌入式服务使用内存存储。会话列表、标题和会话详情均从同一 Session Store 读取，前端的 `localStorage` 只作为离线显示缓存，不再作为会话历史事实源。桌面面试工作台支持拖拽调整左右栏宽度，右侧证据面板可收起为窄栏；移动端仍使用抽屉式证据面板。
 
@@ -100,19 +100,19 @@ Stitch 七张产品页面现已全部重构进主应用；当前覆盖状态、�
 
 ## 岗位准备
 
-侧边栏的“岗位准备”是候选人级的独立页面，不依赖当前是否打开某个项目。用户可以同时保存多个目标岗位，并为每个岗位维护 JD 原文、结构化任职要求、关联项目、独立题库、申请状态和练习历史。一个岗位可关联多个已分析项目；从某道岗位题开始练习后，会话会同时记录岗位和题目 ID，便于回到岗位页查看历史。
+侧边栏的“岗位准备”是面试者级的独立页面，不依赖当前是否打开某个项目。用户可以同时保存多个目标岗位，并为每个岗位维护 JD 原文、结构化任职要求、关联项目、独立题库、申请状态和练习历史。一个岗位可关联多个已分析项目；从某道岗位题开始练习后，会话会同时记录岗位和题目 ID，便于回到岗位页查看历史。
 
 当前创建入口支持直接粘贴 JD，或导入不超过 1MB 的 `.txt`、`.md`、`.json` 文本文件。图片和 PDF 的 OCR 尚未实现；这类 JD 需要先复制为文本。题库生成目前是确定性的本地规则，不调用外部模型：能被项目证据支撑的要求生成项目证据题，其余要求生成经历题。
 
 ## 简历库
 
-“新建复盘会话”页面从简历库选择候选人：候选人卡片展示姓名与候选人 ID，点击“更换”打开选择简历对话框，按姓名、岗位、领域或关联项目搜索并选中一份简历。简历库是全局资源池，不按当前候选人过滤；选中后以该简历作为候选人开始复盘，跨会话能力画像按 `candidate_id` 继续累积。
+“新建复盘会话”页面从简历库选择面试者：面试者卡片展示姓名与面试者 ID，点击“更换”打开选择简历对话框，按姓名、岗位、领域或关联项目搜索并选中一份简历。简历库是全局资源池，不按当前面试者过滤；选中后以该简历作为面试者开始复盘，跨会话能力画像按 `candidate_id` 继续累积。
 
 侧边栏的“简历库”是独立页面：列出全部简历（姓名、岗位、领域、状态、主张数量、关联项目），支持搜索、删除和上传；点击任意简历进入详情页，逐条确认主张的“暂不用以提问”标记，并查看简历原文、关联项目和更新时间。选择简历对话框的上传入口与简历库页面共用同一个上传/主张确认弹窗。
 
-当前上传入口接收 UTF-8 简历文本（`.txt`、`.md` 等复制为文本）；主张提取是确定性的本地规则：跳过章节标题、时间轴和联系方式行，保留以动作词开头或包含结果动词的描述，最多 12 条。每份简历可单独切换主张的 `skip` 标记，表示该主张暂不用于提问。图片和 PDF 的 OCR 尚未实现。后端不可用时，前端选择简历对话框回退到 Stitch 原稿演示数据并显示离线提示。
+当前上传入口只接受 PDF 简历（不超过 10MB）：后端提取 PDF 内嵌文本层后按文本简历入库；扫描件（图片型 PDF，无文本层）无法提取。主张提取是确定性的本地规则：跳过章节标题、时间轴和联系方式行，保留以动作词开头或包含结果动词的描述，最多 12 条。每份简历可单独切换主张的 `skip` 标记，表示该主张暂不用于提问。后端不可用时，前端选择简历对话框回退到 Stitch 原稿演示数据并显示离线提示。
 
-选择简历后创建的复盘会话会把该简历中未跳过的主张写入会话状态：面试工作台的上下文栏展示候选人主张，问题生成优先引用与当前主题匹配的简历主张（“简历主张提到……”），主题选择时也会给命中主张的主题加分；跳过了的主张不会进入会话。主张随会话持久化，重启后仍可恢复。
+选择简历后创建的复盘会话会把该简历中未跳过的主张写入会话状态：面试工作台的上下文栏展示面试者主张，问题生成优先引用与当前主题匹配的简历主张（“简历主张提到……”），主题选择时也会给命中主张的主题加分；跳过了的主张不会进入会话。主张随会话持久化，重启后仍可恢复。
 
 ## 领域与记忆边界
 
@@ -124,7 +124,7 @@ Stitch 七张产品页面现已全部重构进主应用；当前覆盖状态、�
 
 1. 当前回答上下文：`InterviewState` 中的当前问题、回答、评价和证据引用。
 2. 当前会话历史：Session Store 中的 `history`，可随 SQLite 会话恢复。
-3. 跨会话候选人画像：Candidate Profile Store 中按 `candidate_id` 保存主题分数、趋势、最近分数、样本数和弱点；每个弱点保留最近一次来源会话、问题和证据引用。
+3. 跨会话面试者画像：Candidate Profile Store 中按 `candidate_id` 保存主题分数、趋势、最近分数、样本数和弱点；每个弱点保留最近一次来源会话、问题和证据引用。
 
 现有工作流保留 `QuestionGenerator`、`Evaluator`、项目仓库、会话存储和 `InterviewGraph` 作为可替换边界；当前使用 LangGraph 编排工作流、LangChain 调用 LLM，但不依赖 LangChain 的自主 Agent 执行器、PostgreSQL、向量数据库或多 Agent 框架。未配置 LLM 时自动回退到本地规则生成器与评价器。
 ## 前端项目目录上传
@@ -144,7 +144,7 @@ Stitch 七张产品页面现已全部重构进主应用；当前覆盖状态、�
 }
 ```
 
-descriptor 通过现有 `POST /projects/upload` 发送；项目分析完成后，前端继续请求 `status`、`knowledge` 并自动创建 `/sessions` 面试会话，分析结果以 Agent 消息的形式回到聊天流。`project_id` 由前端生成数字并保存到 `localStorage`，刷新页面可恢复最近项目。候选人 ID 默认使用 `VITE_CANDIDATE_ID`，未配置时为 `default`。
+descriptor 通过现有 `POST /projects/upload` 发送；项目分析完成后，前端继续请求 `status`、`knowledge` 并自动创建 `/sessions` 面试会话，分析结果以 Agent 消息的形式回到聊天流。`project_id` 由前端生成数字并保存到 `localStorage`，刷新页面可恢复最近项目。面试者 ID 默认使用 `VITE_CANDIDATE_ID`，未配置时为 `default`。
 
 当前浏览器上传入口只支持目录中的 UTF-8 文本文件和 Folder JSON descriptor；单个文本文件上限为 10MB，单个项目最多 10000 个文件、总文本量 100MB。ZIP、multipart 和二进制文件上传仍不支持。开发模式下显式设置 `VITE_ENABLE_FIXTURE_FALLBACK=true` 时，仍保留无项目 ID 的 fixture fallback 行为。
 

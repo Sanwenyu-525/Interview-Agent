@@ -47,7 +47,7 @@ Analyzer 应优先填充以下通用字段：
 - `evidence`：每个事实的来源路径、定位、摘录、类型和置信度。
 - `metadata`：仅放 JSON-safe 的输入摘要；不要放不可序列化的 Path、AST 或运行时对象。
 
-组件、关系、流程和主题通过 `evidence_ids` 回指 `Evidence.id`。`source_path` 必须是相对于 artifact root 的 POSIX 路径，并且应存在于 Scanner 的文件列表中。Analyzer 不生成问题、不调用 `QuestionGenerator`，也不写入领域评价、候选人能力画像或带领域含义的排序分数；没有明确评审策略时不生成 `topics`。
+组件、关系、流程和主题通过 `evidence_ids` 回指 `Evidence.id`。`source_path` 必须是相对于 artifact root 的 POSIX 路径，并且应存在于 Scanner 的文件列表中。Analyzer 不生成问题、不调用 `QuestionGenerator`，也不写入领域评价、面试者能力画像或带领域含义的排序分数；没有明确评审策略时不生成 `topics`。
 
 组件 ID 必须包含规范化 source path、符号名称和源码行/位置；同名符号也必须得到不同 ID。用于 ID 的可读清洗结果必须结合稳定摘要，避免 `a/b.ts` 与 `a-b.ts` 碰撞。关系去重至少使用 source path 与 target 的组合，不能因为不同源文件调用同一个 URL 而丢失关系。解析失败必须保留来源上下文并抛出带路径/行号的错误，不能静默生成不完整模型。
 

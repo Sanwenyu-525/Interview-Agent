@@ -23,7 +23,7 @@ from interview_agent.repository import InMemoryProjectRepository
 from interview_agent.review import ReviewMode
 from interview_agent.service import InterviewService, InMemorySessionStore
 from interview_agent.ingestion.service import IngestionService
-from interview_agent.ingestion.sources import ZipSource
+from interview_agent.ingestion.sources import DirectorySource, ZipSource
 from interview_agent.ingestion.workspace import WorkspaceManager
 from interview_agent.sqlite_store import SQLiteProjectRepository, SQLiteSessionStore
 
@@ -117,6 +117,20 @@ class InterviewServiceTests(unittest.TestCase):
         )
 
         self.assertEqual(source.source_type, "folder")
+
+    def test_directory_descriptor_uses_server_default_quotas(self):
+        source = InterviewService.source_from_descriptor(
+            {"type": "directory", "source_path": "C:/projects/demo"}
+        )
+
+        self.assertIsInstance(source, DirectorySource)
+        self.assertEqual(source.max_file_size, 10 * 1024 * 1024)
+        self.assertEqual(source.max_total_size, 100 * 1024 * 1024)
+        self.assertEqual(source.max_files, 10_000)
+
+    def test_directory_descriptor_requires_source_path(self):
+        with self.assertRaisesRegex(ValueError, "source_path"):
+            InterviewService.source_from_descriptor({"type": "directory"})
 
     def test_zip_quota_failure_is_saved_as_readable_failed_record(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -541,7 +555,7 @@ class InterviewServiceTests(unittest.TestCase):
         session_id, state = service.start_session(
             7, review_mode=ReviewMode.DEFENSE_REVIEW
         )
-        updated = service.submit_answer(session_id, "浣跨敤浜嬪姟淇濊瘉涓€鑷存€у苟鏀寔鍥炴粴")
+        updated = service.submit_answer(session_id, "使用事务保证一致性并支持回滚")
 
         self.assertEqual(state.review_mode, ReviewMode.DEFENSE_REVIEW.value)
         self.assertEqual(updated.review_mode, ReviewMode.DEFENSE_REVIEW.value)

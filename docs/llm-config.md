@@ -50,10 +50,10 @@ $env:LLM_TEMPERATURE="0.2"
 
 ## 自动启停本地开发服务
 
-项目根目录的 `dev.bat` 可启动桌面端，或自动启动/停止前后端，并在启动前清理 8000 和 4173 端口上的本项目旧进程：
+项目根目录的 `dev.bat` 可在启动/停止前后端、查看状态和日志之间切换，并在启动前清理 8000 和 4173 端口上的本项目旧进程：
 
 ```bat
-dev.bat              rem 启动 Tauri 桌面端（默认）
+dev.bat              rem 打开交互菜单（双击默认）：1 桌面版 2 浏览器版 3 停止 4 状态 5 日志 0 退出
 dev.bat desktop      rem 启动 Tauri 桌面端
 dev.bat start        rem 仅启动后端和浏览器前端
 dev.bat stop

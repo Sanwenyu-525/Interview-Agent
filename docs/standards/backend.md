@@ -69,7 +69,7 @@ Repository / Session Store / Profile Store / LLM Adapter
 
 ## 6. 一致性、并发与幂等
 
-- 会话和候选人画像更新必须使用现有版本/CAS 机制，冲突返回 409。
+- 会话和面试者画像更新必须使用现有版本/CAS 机制，冲突返回 409。
 - 回答提交不是通用幂等操作；前端在请求未完成时必须阻止同一界面的重复提交。
 - 同一 `project_id` 的重复上传表示替换该项目来源，必须保持现有 staging/restore 的原子性。
 - 涉及两个存储的操作必须定义失败恢复顺序，并测试原始错误与回滚错误都可追踪。
@@ -89,7 +89,7 @@ Repository / Session Store / Profile Store / LLM Adapter
 - 默认且正式支持的监听地址只有 `127.0.0.1`；不得将当前无认证服务绑定到公网或局域网接口。
 - CORS 只回显允许的本地/Tauri 开发来源；未知网页来源的预检请求返回 403，不允许使用通配来源。
 - 如需远程部署，必须先增加身份认证、资源授权、严格 CORS、TLS、限流、审计日志、密钥托管和数据保留策略。
-- 不记录 API Key、候选人完整回答、源文件全文或 LLM Authorization header。
+- 不记录 API Key、面试者完整回答、源文件全文或 LLM Authorization header。
 - ZIP `source_path` 只能用于服务进程可访问的本地文件；不得演变为任意 URL 下载器。
 
 ## 9. 可观测性与健康检查
@@ -104,6 +104,6 @@ Repository / Session Store / Profile Store / LLM Adapter
 
 - 模型：序列化往返、证据引用、未知版本和非法字段。
 - Analyzer：支持判断、确定性选择、来源定位、解析失败与不猜测行为。
-- Service：成功链路、回滚、并发冲突、候选人隔离和重启恢复。
+- Service：成功链路、回滚、并发冲突、面试者隔离和重启恢复。
 - HTTP：状态码、统一错误结构、CORS 预检、密钥脱敏和 OpenAPI 操作覆盖。
 - 修复缺陷时先增加可复现测试；新增端点必须同时进入 `PUBLIC_API_OPERATIONS` 和 OpenAPI。

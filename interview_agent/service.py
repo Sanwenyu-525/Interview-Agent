@@ -1,19 +1,22 @@
 import copy
 from contextlib import contextmanager
 from datetime import datetime, timezone
+import base64
+import binascii
 import inspect
 from threading import Lock
 from threading import RLock
 import uuid
 from dataclasses import asdict, replace
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 from .agent import InterviewAgent
 from .analyzers.registry import AnalyzerRegistry
 from .analyzers.scanner import ProjectScanner
 from .graph import InterviewGraph
 from .ingestion import (
+    DirectorySource,
     FolderFile,
     FolderSource,
     IngestionService,
@@ -54,9 +57,12 @@ from .positions import (
 )
 from .repository import InMemoryProjectRepository
 from .resumes import (
+    MAX_PDF_BYTES,
     active_claim_texts,
+    claims_from_text,
     InMemoryResumeStore,
     Resume,
+    extract_pdf_text,
     extract_resume_name,
     new_resume,
     normalize_resume_status,
@@ -547,6 +553,7 @@ class InterviewService:
             "claims_count": len(resume.claims),
             "project_ids": list(resume.project_ids),
             "project_names": list(project_names),
+            "sort_order": resume.sort_order,
             "created_at": resume.created_at,
             "updated_at": resume.updated_at,
         }
@@ -581,6 +588,33 @@ class InterviewService:
         self.resume_store.save(resume)
         return resume
 
+    def upload_resume(self, payload: dict) -> Resume:
+        """接收 Base64 编码的 PDF 简历，提取文本层后按文本简历入库。"""
+        if not isinstance(payload, dict):
+            raise TypeError("简历必须是 JSON 对象")
+        allowed = {"candidate_id", "name", "role", "domain", "file_base64"}
+        unknown = set(payload) - allowed
+        if unknown:
+            raise ValueError(f"简历上传包含未知字段：{sorted(unknown)}")
+        resume_text, pdf_bytes = self._decode_pdf(payload.get("file_base64"))
+        resume = self.create_resume(
+            {
+                "candidate_id": payload.get("candidate_id", "default"),
+                "name": payload.get("name", ""),
+                "role": payload.get("role", ""),
+                "domain": payload.get("domain", ""),
+                "resume_text": resume_text,
+            }
+        )
+        self.resume_store.save_pdf(resume.resume_id, pdf_bytes)
+        return resume
+
+    def get_resume_pdf(self, resume_id: str) -> bytes:
+        try:
+            return self.resume_store.get_pdf(str(resume_id).strip())
+        except KeyError as exc:
+            raise ResumeNotFoundError(f"resume pdf not found: {resume_id}") from exc
+
     def get_resume(self, resume_id: str) -> Resume:
         try:
             return self.resume_store.get(str(resume_id).strip())
@@ -602,12 +636,19 @@ class InterviewService:
     def update_resume(self, resume_id: str, payload: dict) -> Resume:
         if not isinstance(payload, dict) or not payload:
             raise ValueError("简历更新必须包含至少一个字段")
-        allowed = {"role", "domain", "project_ids", "status", "claims"}
+        allowed = {"name", "role", "domain", "project_ids", "status", "claims", "file_base64"}
         unknown = set(payload) - allowed
         if unknown:
             raise ValueError(f"简历更新包含未知字段：{sorted(unknown)}")
         current = self.get_resume(resume_id)
         merged = asdict(current)
+        if "name" in payload:
+            name = str(payload["name"]).strip()
+            if not name:
+                raise ValueError("name 不能为空")
+            if len(name) > 64:
+                raise ValueError("name 不能超过 64 个字符")
+            merged["name"] = name
         if "role" in payload:
             merged["role"] = payload["role"]
         if "domain" in payload:
@@ -633,10 +674,60 @@ class InterviewService:
                 }
                 for claim in current.claims
             ]
+        if "file_base64" in payload:
+            resume_text, pdf_bytes = self._decode_pdf(payload["file_base64"])
+            merged["resume_text"] = resume_text
+            merged["claims"] = [
+                {
+                    "claim_id": claim.claim_id,
+                    "text": claim.text,
+                    "source": claim.source,
+                    "skip": False,
+                }
+                for claim in claims_from_text(resume_id, resume_text)
+            ]
+            merged["status"] = "extracted"
+            self.resume_store.save_pdf(resume_id, pdf_bytes)
         merged["updated_at"] = updated_at()
         validated = resume_from_dict(merged)
         self.resume_store.save(validated)
         return validated
+
+    def _decode_pdf(self, raw: str) -> tuple[str, bytes]:
+        """校验 Base64 PDF，返回提取的文本层与原始字节。"""
+        if not isinstance(raw, str) or not raw.strip():
+            raise ValueError("file_base64 不能为空")
+        try:
+            pdf_bytes = base64.b64decode(raw.strip(), validate=True)
+        except (binascii.Error, ValueError) as exc:
+            raise ValueError("file_base64 不是合法的 Base64 编码") from exc
+        if not pdf_bytes:
+            raise ValueError("PDF 文件为空")
+        if len(pdf_bytes) > MAX_PDF_BYTES:
+            raise ValueError("PDF 文件不能超过 10MB")
+        resume_text = extract_pdf_text(pdf_bytes)
+        if not resume_text.strip():
+            raise ValueError(
+                "无法从 PDF 提取文本：该文件可能是扫描件或图片型 PDF，请改用文本粘贴"
+            )
+        return resume_text, pdf_bytes
+
+    def reorder_resumes(self, ordered_ids: list[str]) -> dict:
+        """按给定顺序持久化简历列表排序（0 为最前）。"""
+        if not isinstance(ordered_ids, list) or not ordered_ids:
+            raise ValueError("resume_ids 必须是至少包含一个元素的数组")
+        normalized = []
+        for item in ordered_ids:
+            if not isinstance(item, str) or not item.strip():
+                raise ValueError("resume_ids 必须只包含字符串")
+            if item.strip() in normalized:
+                raise ValueError(f"resume_ids 包含重复项：{item.strip()}")
+            normalized.append(item.strip())
+        try:
+            self.resume_store.reorder(tuple(normalized))
+        except KeyError as exc:
+            raise ResumeNotFoundError(str(exc)) from exc
+        return {"reordered": len(normalized)}
 
     def delete_resume(self, resume_id: str) -> None:
         try:
@@ -747,7 +838,7 @@ class InterviewService:
             try:
                 project = self.repository.get(normalized_id)
             except KeyError:
-                raise KeyError(f"妞ゅ湱娲版稉宥呯摠閸? {normalized_id}") from None
+                raise KeyError(f"项目不存在: {normalized_id}") from None
             record = ProjectAnalysis(
                 project_id=normalized_id,
                 project_name=project.project_name,
@@ -765,7 +856,7 @@ class InterviewService:
         try:
             return self.repository.get(record.project_id)
         except KeyError:
-            raise KeyError(f"妞ゅ湱娲扮亸姘弓閻㈢喐鍨?knowledge: {record.project_id}") from None
+            raise KeyError(f"项目知识不存在: {record.project_id}") from None
 
     def ingest_and_analyze_project(self, payload: dict[str, Any]) -> ProjectAnalysis:
         project_id = payload["project_id"]
@@ -779,27 +870,16 @@ class InterviewService:
         if not isinstance(descriptor, dict):
             raise TypeError("source must be an object")
         source_type = descriptor.get("type", descriptor.get("source_type"))
-        if source_type == "zip":
+        if source_type in {"zip", "directory"}:
             if not descriptor.get("source_path"):
-                raise ValueError("ZIP source requires source_path")
-            limits = {}
-            defaults = {
-                "max_total_size": ZIP_DESCRIPTOR_DEFAULT_MAX_TOTAL_SIZE,
-                "max_file_size": ZIP_DESCRIPTOR_DEFAULT_MAX_FILE_SIZE,
-                "max_files": ZIP_DESCRIPTOR_DEFAULT_MAX_FILES,
-            }
-            for name, default in defaults.items():
-                value = descriptor.get(name, default)
-                if isinstance(value, bool) or not isinstance(value, int) or value < 0:
-                    raise ValueError(
-                        f"ZIP descriptor {name} must be a non-negative integer"
-                    )
-                if value > default:
-                    raise ValueError(
-                        f"ZIP descriptor {name} exceeds server maximum: {value} > {default}"
-                    )
-                limits[name] = value
-            return ZipSource(Path(descriptor["source_path"]), **limits)
+                raise ValueError(f"{source_type} source requires source_path")
+            limits = InterviewService._quota_limits(descriptor)
+            source = (
+                ZipSource(Path(descriptor["source_path"]), **limits)
+                if source_type == "zip"
+                else DirectorySource(Path(descriptor["source_path"]), **limits)
+            )
+            return source
         if source_type == "folder":
             files = []
             for item in descriptor.get("files", []):
@@ -810,7 +890,29 @@ class InterviewService:
                     raise TypeError("Folder source content must be a string")
                 files.append(FolderFile(path=str(item["path"]), content=content.encode("utf-8")))
             return FolderSource(files)
-        raise ValueError("source type must be zip or folder")
+        raise ValueError("source type must be zip, directory or folder")
+
+    @staticmethod
+    def _quota_limits(descriptor: Mapping[str, Any]) -> dict[str, int]:
+        """读取并校验 zip / directory 描述符的配额字段。"""
+        limits = {}
+        defaults = {
+            "max_total_size": ZIP_DESCRIPTOR_DEFAULT_MAX_TOTAL_SIZE,
+            "max_file_size": ZIP_DESCRIPTOR_DEFAULT_MAX_FILE_SIZE,
+            "max_files": ZIP_DESCRIPTOR_DEFAULT_MAX_FILES,
+        }
+        for name, default in defaults.items():
+            value = descriptor.get(name, default)
+            if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+                raise ValueError(
+                    f"{name} must be a non-negative integer"
+                )
+            if value > default:
+                raise ValueError(
+                    f"{name} exceeds server maximum: {value} > {default}"
+                )
+            limits[name] = value
+        return limits
 
     def _save_analysis(self, record: ProjectAnalysis) -> None:
         self._analysis_records[record.project_id] = record
@@ -872,7 +974,7 @@ class InterviewService:
         if requested_position_id:
             position = self.get_position(requested_position_id)
             if position.candidate_id != candidate_id:
-                raise ValueError("岗位与候选人不匹配")
+                raise ValueError("岗位与面试者不匹配")
             if normalized_id not in position.project_ids:
                 raise ValueError("当前项目未关联到该岗位")
             candidates = [
@@ -918,7 +1020,7 @@ class InterviewService:
                     **start_kwargs,
                 )
         except KeyError as exc:
-            raise ProjectNotFoundError(f"妞ゅ湱娲版稉宥呯摠閸? {normalized_id}") from exc
+            raise ProjectNotFoundError(f"项目不存在: {normalized_id}") from exc
         state = replace(
             state,
             candidate_id=str(candidate_id),

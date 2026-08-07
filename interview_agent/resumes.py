@@ -6,12 +6,13 @@
 """
 
 import copy
+import io
 import json
 import re
 import sqlite3
 import uuid
 from contextlib import contextmanager
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime, timezone
 
 from .memory.profile_store import normalize_candidate_id
@@ -21,6 +22,7 @@ CURRENT_RESUME_SCHEMA_VERSION = 1
 RESUME_STATUSES = frozenset({"pending", "analyzing", "extracted"})
 RESUME_CLAIM_SOURCE = "简历主张"
 MAX_CLAIMS = 12
+MAX_PDF_BYTES = 10 * 1024 * 1024
 
 _SECTION_HEADINGS = frozenset(
     {
@@ -184,6 +186,24 @@ def extract_claims(resume_text: str) -> tuple[str, ...]:
     return tuple(claims)
 
 
+def extract_pdf_text(pdf_bytes: bytes) -> str:
+    """从 PDF 字节提取纯文本层，失败或无文本层时抛 ValueError。
+
+    只提取内嵌文本层，不处理图片型扫描件（需要 OCR，属范围外）。
+    """
+    try:
+        from pypdf import PdfReader
+    except ImportError as exc:
+        raise ValueError("PDF 解析依赖 pypdf 未安装，请先执行 pip install pypdf") from exc
+    try:
+        reader = PdfReader(io.BytesIO(pdf_bytes), strict=False)
+        pages = [page.extract_text() for page in reader.pages]
+    except Exception as exc:
+        raise ValueError(f"PDF 解析失败：{exc}") from exc
+    text = "\n".join(part.strip() for part in pages if part and part.strip())
+    return text.strip()
+
+
 @dataclass(frozen=True)
 class ResumeClaim:
     claim_id: str
@@ -203,6 +223,7 @@ class Resume:
     status: str
     claims: tuple[ResumeClaim, ...] = field(default_factory=tuple)
     project_ids: tuple[int, ...] = field(default_factory=tuple)
+    sort_order: int = 0
     created_at: str = ""
     updated_at: str = ""
     schema_version: int = CURRENT_RESUME_SCHEMA_VERSION
@@ -229,6 +250,7 @@ def resume_from_dict(payload: dict) -> Resume:
             status=normalize_resume_status(payload.get("status", "extracted")),
             claims=tuple(ResumeClaim(**item) for item in payload.get("claims", [])),
             project_ids=tuple(int(item) for item in payload.get("project_ids", [])),
+            sort_order=int(payload.get("sort_order", 0)),
             created_at=_text(payload.get("created_at", ""), "created_at", limit=100),
             updated_at=_text(payload.get("updated_at", ""), "updated_at", limit=100),
             schema_version=schema_version,
@@ -245,6 +267,7 @@ def active_claim_texts(resume: Resume) -> tuple[str, ...]:
 class InMemoryResumeStore:
     def __init__(self):
         self._resumes: dict[str, Resume] = {}
+        self._pdfs: dict[str, bytes] = {}
 
     def save(self, resume: Resume) -> None:
         self._resumes[resume.resume_id] = copy.deepcopy(resume)
@@ -262,12 +285,32 @@ class InMemoryResumeStore:
             if candidate_id is None or resume.candidate_id == candidate_id
         ]
         resumes.sort(key=lambda item: item.updated_at, reverse=True)
+        resumes.sort(key=lambda item: item.sort_order)
         return resumes[:limit]
+
+    def reorder(self, ordered_ids: tuple[str, ...]) -> None:
+        """按给定顺序重写简历的 sort_order（0 为最前）。"""
+        for index, resume_id in enumerate(ordered_ids):
+            resume = self._resumes[resume_id]
+            self._resumes[resume_id] = replace(resume, sort_order=index)
 
     def delete(self, resume_id: str) -> None:
         if resume_id not in self._resumes:
             raise KeyError(f"resume not found: {resume_id}")
         del self._resumes[resume_id]
+        self._pdfs.pop(resume_id, None)
+
+    def save_pdf(self, resume_id: str, pdf_bytes: bytes) -> None:
+        self._pdfs[resume_id] = pdf_bytes
+
+    def get_pdf(self, resume_id: str) -> bytes:
+        try:
+            return self._pdfs[resume_id]
+        except KeyError as exc:
+            raise KeyError(f"resume pdf not found: {resume_id}") from exc
+
+    def delete_pdf(self, resume_id: str) -> None:
+        self._pdfs.pop(resume_id, None)
 
 
 class SQLiteResumeStore:
@@ -278,6 +321,10 @@ class SQLiteResumeStore:
                 "CREATE TABLE IF NOT EXISTS resumes "
                 "(resume_id TEXT PRIMARY KEY, candidate_id TEXT NOT NULL, "
                 "payload TEXT NOT NULL, updated_at TEXT NOT NULL)"
+            )
+            connection.execute(
+                "CREATE TABLE IF NOT EXISTS resume_pdf "
+                "(resume_id TEXT PRIMARY KEY, pdf BLOB NOT NULL)"
             )
             connection.execute(
                 "CREATE INDEX IF NOT EXISTS resumes_candidate_updated "
@@ -306,15 +353,36 @@ class SQLiteResumeStore:
 
     def list(self, candidate_id: str | None = None, limit: int = 50) -> list[Resume]:
         if candidate_id is None:
-            query = "SELECT payload FROM resumes ORDER BY updated_at DESC LIMIT ?"
-            parameters = (limit,)
+            query = "SELECT payload FROM resumes ORDER BY updated_at DESC"
+            parameters = ()
         else:
             query = "SELECT payload FROM resumes WHERE candidate_id = ? " \
-                "ORDER BY updated_at DESC LIMIT ?"
-            parameters = (candidate_id, limit)
+                "ORDER BY updated_at DESC"
+            parameters = (candidate_id,)
         with _connection(self.database) as connection:
             rows = connection.execute(query, parameters).fetchall()
-        return [resume_from_dict(json.loads(row[0])) for row in rows]
+        resumes = [resume_from_dict(json.loads(row[0])) for row in rows]
+        resumes.sort(key=lambda item: item.updated_at, reverse=True)
+        resumes.sort(key=lambda item: item.sort_order)
+        return resumes[:limit]
+
+    def reorder(self, ordered_ids: tuple[str, ...]) -> None:
+        """按给定顺序重写简历的 sort_order（0 为最前）。"""
+        for index, resume_id in enumerate(ordered_ids):
+            with _connection(self.database) as connection:
+                row = connection.execute(
+                    "SELECT payload FROM resumes WHERE resume_id = ?", (resume_id,)
+                ).fetchone()
+            if row is None:
+                raise KeyError(f"resume not found: {resume_id}")
+            payload = json.loads(row[0])
+            payload["sort_order"] = index
+            with _connection(self.database) as connection:
+                connection.execute(
+                    "UPDATE resumes SET payload = ?, updated_at = updated_at "
+                    "WHERE resume_id = ?",
+                    (json.dumps(payload, ensure_ascii=False), resume_id),
+                )
 
     def delete(self, resume_id: str) -> None:
         with _connection(self.database) as connection:
@@ -323,6 +391,30 @@ class SQLiteResumeStore:
             )
             if cursor.rowcount == 0:
                 raise KeyError(f"resume not found: {resume_id}")
+        self.delete_pdf(resume_id)
+
+    def save_pdf(self, resume_id: str, pdf_bytes: bytes) -> None:
+        with _connection(self.database) as connection:
+            connection.execute(
+                "INSERT INTO resume_pdf(resume_id, pdf) VALUES (?, ?) "
+                "ON CONFLICT(resume_id) DO UPDATE SET pdf=excluded.pdf",
+                (resume_id, pdf_bytes),
+            )
+
+    def get_pdf(self, resume_id: str) -> bytes:
+        with _connection(self.database) as connection:
+            row = connection.execute(
+                "SELECT pdf FROM resume_pdf WHERE resume_id = ?", (resume_id,)
+            ).fetchone()
+        if row is None:
+            raise KeyError(f"resume pdf not found: {resume_id}")
+        return row[0]
+
+    def delete_pdf(self, resume_id: str) -> None:
+        with _connection(self.database) as connection:
+            connection.execute(
+                "DELETE FROM resume_pdf WHERE resume_id = ?", (resume_id,)
+            )
 
 
 def normalize_project_ids(value) -> tuple[int, ...]:
@@ -341,6 +433,20 @@ def normalize_project_ids(value) -> tuple[int, ...]:
     return tuple(normalized)
 
 
+def claims_from_text(resume_id: str, resume_text: str) -> tuple[ResumeClaim, ...]:
+    """从简历文本提取主张并生成稳定的 claim_id（同名同序同 id）。"""
+    return tuple(
+        ResumeClaim(
+            claim_id=uuid.uuid5(
+                uuid.NAMESPACE_URL,
+                f"interview-agent:{resume_id}:claim:{index}:{text}",
+            ).hex,
+            text=text,
+        )
+        for index, text in enumerate(extract_claims(resume_text))
+    )
+
+
 def new_resume(
     *,
     candidate_id: str,
@@ -352,16 +458,7 @@ def new_resume(
 ) -> Resume:
     resume_id = uuid.uuid4().hex
     timestamp = _now()
-    claims = tuple(
-        ResumeClaim(
-            claim_id=uuid.uuid5(
-                uuid.NAMESPACE_URL,
-                f"interview-agent:{resume_id}:claim:{index}:{text}",
-            ).hex,
-            text=text,
-        )
-        for index, text in enumerate(extract_claims(resume_text))
-    )
+    claims = claims_from_text(resume_id, resume_text)
     return Resume(
         resume_id=resume_id,
         candidate_id=normalize_candidate_id(candidate_id),

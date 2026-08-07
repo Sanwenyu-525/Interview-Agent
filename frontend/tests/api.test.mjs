@@ -18,15 +18,18 @@ import {
   getProjectStatus,
   getPositions,
   getResume,
+  getResumePdf,
   getResumes,
   getSessionReport,
   getSessions,
   getCandidateProfile,
   getSession,
   openProjectDirectory,
+  pickProjectDirectory,
   reusePromise,
   renameSession,
   regeneratePositionQuestions,
+  reorderResumes,
   saveLLMSettings,
   startInterviewSession,
   submitAnswer,
@@ -37,6 +40,7 @@ import {
   updateLLMProfile,
   updatePosition,
   uploadProject,
+  uploadResume,
 } from "../src/api.js";
 
 const project = {
@@ -192,13 +196,76 @@ test("resume library API supports list, create, get, update, and delete", async 
     await getResume("resume-1");
     await updateResume("resume-1", { role: "后端工程师" });
     await deleteResume("resume-1");
+    await reorderResumes(["resume-b", "resume-1"]);
     assert.deepEqual(requests.map(({ url, options }) => [url, options?.method || "GET"]), [
       ["http://127.0.0.1:8000/resumes?candidate_id=alice&limit=10", "GET"],
       ["http://127.0.0.1:8000/resumes", "POST"],
       ["http://127.0.0.1:8000/resumes/resume-1", "GET"],
       ["http://127.0.0.1:8000/resumes/resume-1", "PATCH"],
       ["http://127.0.0.1:8000/resumes/resume-1", "DELETE"],
+      ["http://127.0.0.1:8000/resumes/order", "PUT"],
     ]);
+    assert.deepEqual(JSON.parse(requests.at(-1).options.body), { resume_ids: ["resume-b", "resume-1"] });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("uploadResume posts the base64 PDF to the upload endpoint", async () => {
+  const originalFetch = globalThis.fetch;
+  let request;
+  globalThis.fetch = async (url, options) => {
+    request = { url, options };
+    return new Response(JSON.stringify({ resume_id: "resume-pdf-1", name: "张三", status: "extracted" }), { status: 201 });
+  };
+
+  try {
+    const result = await uploadResume({ name: "张三", role: "后端工程师", file_base64: "JVBERi0xLjQK" });
+    assert.equal(result.resume_id, "resume-pdf-1");
+    assert.equal(request.url, "http://127.0.0.1:8000/resumes/upload");
+    assert.equal(request.options.method, "POST");
+    assert.deepEqual(JSON.parse(request.options.body), { name: "张三", role: "后端工程师", file_base64: "JVBERi0xLjQK" });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("getResumePdf downloads the resume PDF as bytes with a JSON error contract", async () => {
+  const originalFetch = globalThis.fetch;
+  const requests = [];
+  const encoder = new TextEncoder();
+  globalThis.fetch = async (url, options) => {
+    requests.push({ url, options });
+    return new Response(encoder.encode("%PDF-1.4 fake"), { status: 200, headers: { "Content-Type": "application/pdf" } });
+  };
+
+  try {
+    const bytes = await getResumePdf("resume-1");
+    assert.ok(bytes instanceof ArrayBuffer);
+    assert.equal(new TextDecoder().decode(bytes), "%PDF-1.4 fake");
+    assert.equal(requests[0].url, "http://127.0.0.1:8000/resumes/resume-1/pdf");
+    assert.equal(requests[0].options, undefined);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("getResumePdf surfaces backend errors from the PDF endpoint", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response(
+    JSON.stringify({ error: "resume pdf not found", code: "resume_not_found", retryable: false, request_id: "r1" }),
+    { status: 404, headers: { "X-Request-ID": "r1" } },
+  );
+
+  try {
+    await assert.rejects(
+      () => getResumePdf("missing"),
+      (error) => {
+        assert.equal(error.status, 404);
+        assert.equal(error.code, "resume_not_found");
+        return true;
+      },
+    );
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -474,4 +541,56 @@ test("openProjectDirectory invokes the Tauri native command", async () => {
   await openProjectDirectory("..", invoke);
 
   assert.deepEqual(calls, [["open_project_directory", { path: ".." }]]);
+});
+
+test("pickProjectDirectory opens the native dialog and remembers the last path", async () => {
+  const invoke = async () => null;
+  let dialogRequest;
+  const dialog = {
+    open: async (options) => {
+      dialogRequest = { options };
+      return "C:\\projects\\demo";
+    },
+  };
+
+  const originalStorage = globalThis.localStorage;
+  const stored = {};
+  globalThis.localStorage = {
+    getItem: (key) => stored[key] ?? null,
+    setItem: (key, value) => { stored[key] = String(value); },
+    removeItem: (key) => { delete stored[key]; },
+  };
+
+  try {
+    const result = await pickProjectDirectory({ invoke, dialog });
+    assert.equal(result, "C:\\projects\\demo");
+    assert.equal(stored.last_project_dir, "C:\\projects\\demo");
+    assert.equal(dialogRequest.options.directory, true);
+    assert.equal(dialogRequest.options.defaultPath, undefined);
+
+    dialog.open = async (options) => {
+      dialogRequest = { options };
+      return "C:\\projects\\second";
+    };
+    await pickProjectDirectory({ invoke, dialog });
+    assert.equal(dialogRequest.options.defaultPath, "C:\\projects\\demo");
+  } finally {
+    globalThis.localStorage = originalStorage;
+  }
+});
+
+test("pickProjectDirectory returns null when the dialog is cancelled", async () => {
+  const invoke = async () => null;
+  const dialog = { open: async () => null };
+
+  const result = await pickProjectDirectory({ invoke, dialog });
+
+  assert.equal(result, null);
+});
+
+test("pickProjectDirectory rejects calls outside Tauri", async () => {
+  await assert.rejects(
+    () => pickProjectDirectory({ invoke: null }),
+    /not running in Tauri/,
+  );
 });

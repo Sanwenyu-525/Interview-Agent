@@ -34,7 +34,10 @@ PUBLIC_API_OPERATIONS = frozenset(
         ("POST", "/positions/{position_id}/questions"),
         ("GET", "/resumes"),
         ("POST", "/resumes"),
+        ("POST", "/resumes/upload"),
+        ("PUT", "/resumes/order"),
         ("GET", "/resumes/{resume_id}"),
+        ("GET", "/resumes/{resume_id}/pdf"),
         ("PATCH", "/resumes/{resume_id}"),
         ("DELETE", "/resumes/{resume_id}"),
         ("POST", "/sessions"),
@@ -107,6 +110,19 @@ def create_server(service: InterviewService, host: str = "127.0.0.1", port: int 
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             self.wfile.write(body)
+
+        def _send_pdf(self, data: bytes):
+            self.send_response(200)
+            self.send_header("Content-Type", "application/pdf")
+            self.send_header("Content-Disposition", "inline")
+            allowed_origin = self._allowed_cors_origin()
+            if allowed_origin:
+                self.send_header("Access-Control-Allow-Origin", allowed_origin)
+                self.send_header("Vary", "Origin")
+            self.send_header("X-Request-ID", self._current_request_id())
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
 
         def _send_stream_headers(self):
             self.send_response(200)
@@ -278,6 +294,9 @@ def create_server(service: InterviewService, host: str = "127.0.0.1", port: int 
                 if len(parts) == 2 and parts[0] == "resumes":
                     self._send(200, service.get_resume(parts[1]))
                     return
+                if len(parts) == 3 and parts[0] == "resumes" and parts[2] == "pdf":
+                    self._send_pdf(service.get_resume_pdf(parts[1]))
+                    return
                 if len(parts) == 2 and parts[0] == "sessions":
                     self._send(200, {"session_id": parts[1], "state": service.get_session(parts[1])})
                     return
@@ -340,6 +359,9 @@ def create_server(service: InterviewService, host: str = "127.0.0.1", port: int 
                     return
                 if parts == ["resumes"]:
                     self._send(201, service.create_resume(payload))
+                    return
+                if parts == ["resumes", "upload"]:
+                    self._send(201, service.upload_resume(payload))
                     return
                 if parts == ["settings", "llm"]:
                     self._send(200, service.update_llm_settings(payload))
@@ -434,12 +456,17 @@ def create_server(service: InterviewService, host: str = "127.0.0.1", port: int 
             parts = [part for part in urlparse(self.path).path.split("/") if part]
             try:
                 payload = self._body()
+                if parts == ["resumes", "order"]:
+                    self._send(200, service.reorder_resumes(payload.get("resume_ids", [])))
+                    return
                 if len(parts) == 4 and parts[:3] == ["settings", "llm", "profiles"]:
                     self._send(200, service.update_llm_profile(parts[3], payload))
                     return
                 self._send_error(404, "route_not_found", "路由不存在")
             except LLMError as exc:
                 self._send_error(502, "llm_upstream_error", str(exc), retryable=True)
+            except ResumeNotFoundError as exc:
+                self._send_error(404, "resume_not_found", str(exc))
             except KeyError as exc:
                 self._send_error(404, "resource_not_found", str(exc))
             except (ValueError, TypeError, json.JSONDecodeError) as exc:
