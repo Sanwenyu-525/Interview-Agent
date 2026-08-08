@@ -16,10 +16,20 @@
   --text-primary: #26241f;
   --text-secondary: #676158;
   --primary: #985423;
+  --primary-hover: #9f5928;
   --primary-soft: #f3e7dc;
   --success: #2f7057;
+  --success-soft: #e4f0e7;
   --warning: #8a5a00;
+  --warning-soft: #f7ecd2;
   --error: #a04432;
+  --error-soft: #f7e7e2;
+  --text-on-primary: #fffefb;
+  --code-surface: #292a28;
+  --code-text: #eee9df;
+  --code-line-number: #807e76;
+  --code-comment: #a7c17f;
+  --scrim: rgba(38, 36, 31, .24);
 
   /* legacy aliases kept for existing views while styles migrate */
   --paper: var(--background);
@@ -62,4 +72,64 @@
   --page-inset-x: 20px;
   --page-inset-top: 16px;
   --page-inset-bottom: 20px;
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --background: #171815;
+  --surface: #22231f;
+  --surface-soft: #2a2b26;
+  --surface-raised: #30312b;
+  --border: #3c3c36;
+  --border-strong: #77766d;
+  --text-primary: #f4f1e9;
+  --text-secondary: #b9b3a9;
+  --primary: #d89258;
+  --primary-hover: #e6a16b;
+  --primary-soft: #473125;
+  --success: #76b996;
+  --success-soft: #20372b;
+  --warning: #d7a654;
+  --warning-soft: #3d321e;
+  --error: #e1836e;
+  --error-soft: #3d2622;
+  --text-on-primary: #171815;
+  --code-surface: #1c1e1a;
+  --code-text: #f4f1e9;
+  --code-line-number: #8f9186;
+  --code-comment: #9bc39a;
+  --scrim: rgba(0, 0, 0, .56);
+  --focus-ring: 0 0 0 3px rgba(216, 146, 88, .3);
+  --shadow-soft: 0 10px 26px rgba(0, 0, 0, .22);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme]) {
+    color-scheme: dark;
+    --background: #171815;
+    --surface: #22231f;
+    --surface-soft: #2a2b26;
+    --surface-raised: #30312b;
+    --border: #3c3c36;
+    --border-strong: #77766d;
+    --text-primary: #f4f1e9;
+    --text-secondary: #b9b3a9;
+    --primary: #d89258;
+    --primary-hover: #e6a16b;
+    --primary-soft: #473125;
+    --success: #76b996;
+    --success-soft: #20372b;
+    --warning: #d7a654;
+    --warning-soft: #3d321e;
+    --error: #e1836e;
+    --error-soft: #3d2622;
+    --text-on-primary: #171815;
+    --code-surface: #1c1e1a;
+    --code-text: #f4f1e9;
+    --code-line-number: #8f9186;
+    --code-comment: #9bc39a;
+    --scrim: rgba(0, 0, 0, .56);
+    --focus-ring: 0 0 0 3px rgba(216, 146, 88, .3);
+    --shadow-soft: 0 10px 26px rgba(0, 0, 0, .22);
+  }
 }

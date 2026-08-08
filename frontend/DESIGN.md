@@ -14,19 +14,29 @@ Interview Agent is a desktop-first project review cockpit: calm, exact, evidence
 
 Use one warm neutral family across the product and one restrained accent. Never mix cool blue-gray surfaces into this palette.
 
-- **Paper Canvas** (#F7F5EF) — application background and main workspace canvas.
-- **Porcelain Surface** (#FFFDF8) — panels, input surfaces, primary reading areas.
-- **Linen Surface** (#F1EEE7) — secondary regions, hover states, grouped controls.
-- **Whisper Line** (#E6E1D8) — 1px structural borders and dividers.
-- **Charcoal Ink** (#25241F) — primary text; never use pure black.
-- **Graphite Copy** (#5E5A52) — body copy and secondary labels.
-- **Muted Stone** (#8A877F) — metadata, timestamps, placeholders.
-- **Mineral Copper** (#B36A2E) — the only accent; primary actions, active navigation, evidence references, focus rings.
-- **Copper Wash** (#F7EBDD) — selected rows, evidence highlights, quiet active states.
-- **Verdigris Success** (#4C8A70) — semantic success and online status only, never a competing brand accent.
-- **Terracotta Risk** (#B65F49) — errors, destructive actions, and risk findings only.
+- **Paper Canvas** (#F4F1EB) — application background and main workspace canvas.
+- **Porcelain Surface** (#FFFEFB) — panels, input surfaces, primary reading areas.
+- **Linen Surface** (#EEEAE3) — secondary regions, hover states, grouped controls.
+- **Whisper Line** (#DED8CF) — 1px structural borders and dividers.
+- **Charcoal Ink** (#26241F) — primary text; never use pure black.
+- **Graphite Copy** (#676158) — body copy and secondary labels.
+- **Muted Stone** (#9A9186) — metadata, timestamps, placeholders.
+- **Mineral Copper** (#985423) — the only accent; primary actions, active navigation, evidence references, focus rings.
+- **Copper Wash** (#F3E7DC) — selected rows, evidence highlights, quiet active states.
+- **Verdigris Success** (#2F7057) — semantic success and online status only, never a competing brand accent.
+- **Terracotta Risk** (#A04432) — errors, destructive actions, and risk findings only.
 
 No gradients in core application chrome. No neon, purple, blue glow, or outer-glow effects.
+
+### Theme modes
+
+Light and dark themes use the same semantic roles; components must not choose colors by page. The dark palette is:
+
+- **Dark Canvas** (#171815), **Dark Surface** (#22231F), **Dark Surface Raised** (#30312B)
+- **Dark Line** (#3C3C36), **Dark Primary Text** (#F4F1E9), **Dark Secondary Text** (#B9B3A9)
+- **Dark Copper** (#D89258), **Dark Success** (#76B996), **Dark Warning** (#D7A654), **Dark Error** (#E1836E)
+
+The default preference follows the operating-system color scheme. A manual choice is stored locally and overrides the system until the user selects “跟随系统” again. Code evidence, forms, drawers, feedback states, and status badges must consume semantic tokens so both themes retain readable contrast and status meaning.
 
 ## 3. Typography Rules
 

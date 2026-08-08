@@ -79,6 +79,12 @@ import {
 
 const PROJECT_STORAGE_KEY = "interview-agent.project-id";
 const TASK_STORAGE_PREFIX = "interview-agent.tasks";
+const THEME_STORAGE_KEY = "interview-agent.theme";
+const THEME_OPTIONS = [
+  { value: "system", label: "跟随系统" },
+  { value: "light", label: "浅色" },
+  { value: "dark", label: "深色" },
+];
 const DEFAULT_CANDIDATE_ID = "default";
 const MAX_INTERVIEW_DIRECTIONS = 5;
 const DEFAULT_CONTEXT_RAIL_WIDTH = 216;
@@ -88,6 +94,15 @@ const MAX_CONTEXT_RAIL_WIDTH = 360;
 const MIN_EVIDENCE_PANEL_WIDTH = 280;
 const MAX_EVIDENCE_PANEL_WIDTH = 520;
 const MIN_CHAT_WIDTH = 360;
+
+function readThemePreference() {
+  try {
+    const saved = globalThis.localStorage?.getItem(THEME_STORAGE_KEY);
+    return THEME_OPTIONS.some((option) => option.value === saved) ? saved : "system";
+  } catch {
+    return "system";
+  }
+}
 
 function defaultContextRailWidth() {
   return (globalThis.innerWidth || 1440) <= 1220 ? 192 : DEFAULT_CONTEXT_RAIL_WIDTH;
@@ -1089,7 +1104,7 @@ function ProjectView({ session }) {
   );
 }
 
-function SettingsView({ settings, profiles, profilesLoading, isLoading, isSaving, isTesting, notice, error, onSave, onTest, onCreateProfile, onUpdateProfile, onDeleteProfile, onActivateProfile, onTestProfile, agents, agentsLoading, agentNotice, agentError, isAgentSaving, onCreateAgent, onUpdateAgent, onDeleteAgent }) {
+function SettingsView({ settings, profiles, profilesLoading, isLoading, isSaving, isTesting, notice, error, onSave, onTest, onCreateProfile, onUpdateProfile, onDeleteProfile, onActivateProfile, onTestProfile, agents, agentsLoading, agentNotice, agentError, isAgentSaving, onCreateAgent, onUpdateAgent, onDeleteAgent, theme, onThemeChange }) {
   const [form, setForm] = useState(EMPTY_LLM_SETTINGS);
   const [selectedProvider, setSelectedProvider] = useState("custom");
   const [editingProfileId, setEditingProfileId] = useState("");
@@ -1272,6 +1287,14 @@ function SettingsView({ settings, profiles, profilesLoading, isLoading, isSaving
           <span className="view-kicker"><GearSix size={16} /> 应用设置</span>
           <h1>工作区设置</h1>
           <p>配置驱动项目理解和面试评价的大模型。</p>
+        </div>
+        <div className="theme-control" role="group" aria-label="界面主题">
+          <span className="theme-control-label">界面主题</span>
+          <div className="theme-control-options" role="radiogroup" aria-label="选择界面主题">
+            {THEME_OPTIONS.map((option) => (
+              <button className={theme === option.value ? "is-active" : ""} type="button" role="radio" aria-checked={theme === option.value} onClick={() => onThemeChange(option.value)} key={option.value}>{option.label}</button>
+            ))}
+          </div>
         </div>
       </div>
       <div className="settings-tabs" role="tablist" aria-label="设置分类">
@@ -1458,6 +1481,7 @@ function SettingsView({ settings, profiles, profilesLoading, isLoading, isSaving
 function App() {
   const [session, setSession] = useState(null);
   const [activeView, setActiveView] = useState("interview");
+  const [theme, setTheme] = useState(readThemePreference);
   const [answer, setAnswer] = useState("");
   const [evaluation, setEvaluation] = useState(null);
   const [history, setHistory] = useState([]);
@@ -1512,6 +1536,29 @@ function App() {
   const moreMenuRef = useRef(null);
   const streamAbortRef = useRef(null);
   const messageListRef = useRef(null);
+
+  useEffect(() => {
+    if (typeof document === "undefined") return undefined;
+    const mediaQuery = globalThis.matchMedia?.("(prefers-color-scheme: dark)");
+    const syncTheme = () => {
+      const resolvedTheme = theme === "system" && mediaQuery?.matches ? "dark" : theme === "system" ? "light" : theme;
+      document.documentElement.dataset.theme = resolvedTheme;
+      document.documentElement.style.colorScheme = resolvedTheme;
+    };
+    syncTheme();
+    mediaQuery?.addEventListener?.("change", syncTheme);
+    return () => mediaQuery?.removeEventListener?.("change", syncTheme);
+  }, [theme]);
+
+  function handleThemeChange(nextTheme) {
+    if (!THEME_OPTIONS.some((option) => option.value === nextTheme)) return;
+    setTheme(nextTheme);
+    try {
+      globalThis.localStorage?.setItem(THEME_STORAGE_KEY, nextTheme);
+    } catch {
+      // Theme remains available for the current session when storage is unavailable.
+    }
+  }
 
   function adoptLoadedSession(loaded) {
     if (loaded.needsUpload) {
@@ -2367,7 +2414,7 @@ function App() {
       ) : activeView === "profile" ? (
         <CandidateProfileView profile={candidateProfile} loading={isCandidateProfileLoading} error={candidateProfileError} onRetry={loadCandidateProfile} onPractice={() => setActiveView("session-new")} onOpenSource={handleOpenWeaknessSource} />
       ) : (
-        <section className="workspace secondary-workspace stitch-settings-workspace" aria-label="应用设置"><SettingsView settings={llmSettings} profiles={llmProfiles} profilesLoading={isLLMProfilesLoading} isLoading={isLLMSettingsLoading} isSaving={isLLMSettingsSaving} isTesting={isLLMSettingsTesting} notice={llmSettingsNotice} error={llmSettingsError} onSave={handleSaveLLMSettings} onTest={handleTestLLMConnection} onCreateProfile={handleCreateLLMProfile} onUpdateProfile={handleUpdateLLMProfile} onDeleteProfile={handleDeleteLLMProfile} onActivateProfile={handleActivateLLMProfile} onTestProfile={handleTestLLMProfile} agents={agents} agentsLoading={isAgentsLoading} agentNotice={agentNotice} agentError={agentError} isAgentSaving={isAgentSaving} onCreateAgent={handleCreateAgent} onUpdateAgent={handleUpdateAgent} onDeleteAgent={handleDeleteAgent} /></section>
+        <section className="workspace secondary-workspace stitch-settings-workspace" aria-label="应用设置"><SettingsView settings={llmSettings} profiles={llmProfiles} profilesLoading={isLLMProfilesLoading} isLoading={isLLMSettingsLoading} isSaving={isLLMSettingsSaving} isTesting={isLLMSettingsTesting} notice={llmSettingsNotice} error={llmSettingsError} onSave={handleSaveLLMSettings} onTest={handleTestLLMConnection} onCreateProfile={handleCreateLLMProfile} onUpdateProfile={handleUpdateLLMProfile} onDeleteProfile={handleDeleteLLMProfile} onActivateProfile={handleActivateLLMProfile} onTestProfile={handleTestLLMProfile} agents={agents} agentsLoading={isAgentsLoading} agentNotice={agentNotice} agentError={agentError} isAgentSaving={isAgentSaving} onCreateAgent={handleCreateAgent} onUpdateAgent={handleUpdateAgent} onDeleteAgent={handleDeleteAgent} theme={theme} onThemeChange={handleThemeChange} /></section>
       )}
       </main>
     </AppWindow>

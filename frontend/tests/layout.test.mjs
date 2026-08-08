@@ -123,6 +123,23 @@ test("P2 motion uses bounded tokens and a reduced-motion fallback", () => {
   assert.match(css, /\/\* P2-1 motion:[\s\S]*@media \(prefers-reduced-motion: reduce\)[\s\S]*animation: none !important;/);
 });
 
+test("P2 theme uses semantic dark tokens and a persisted system preference", () => {
+  assert.match(tokens, /:root\[data-theme="dark"\]/);
+  assert.match(tokens, /--background:\s*#171815/);
+  assert.match(tokens, /--surface:\s*#22231f/);
+  assert.match(tokens, /--text-primary:\s*#f4f1e9/);
+  assert.match(tokens, /--primary:\s*#d89258/);
+  assert.match(app, /THEME_STORAGE_KEY/);
+  assert.match(app, /readThemePreference/);
+  assert.match(app, /prefers-color-scheme: dark/);
+  assert.match(app, /document\.documentElement\.dataset\.theme/);
+  assert.match(app, /role="radiogroup" aria-label="选择界面主题"/);
+  assert.match(app, /跟随系统/);
+  assert.match(app, /label: "深色"/);
+  assert.match(css, /\.theme-control-options/);
+  assert.match(css, /--code-surface/);
+});
+
 test("desktop layout uses the center workspace as the primary scroll container", () => {
   assert.match(app, /<PrimarySidebar/);
   assert.match(css, /\.stitch-primary-sidebar\s*\{[^}]*grid-column:\s*1;/s);
