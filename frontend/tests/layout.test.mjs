@@ -114,6 +114,15 @@ test("reports and profile translate low-sample data into cautious user-facing la
   assert.match(css, /\.profile-bar-empty/);
 });
 
+test("P2 motion uses bounded tokens and a reduced-motion fallback", () => {
+  assert.match(tokens, /--motion-fast:\s*160ms/);
+  assert.match(tokens, /--motion-standard:\s*180ms/);
+  assert.match(tokens, /--motion-ease-out:\s*cubic-bezier/);
+  assert.match(css, /transition:\s*[\s\S]*transform var\(--motion-standard\) var\(--motion-ease-out\)/);
+  assert.match(css, /@keyframes p2-fade-in/);
+  assert.match(css, /\/\* P2-1 motion:[\s\S]*@media \(prefers-reduced-motion: reduce\)[\s\S]*animation: none !important;/);
+});
+
 test("desktop layout uses the center workspace as the primary scroll container", () => {
   assert.match(app, /<PrimarySidebar/);
   assert.match(css, /\.stitch-primary-sidebar\s*\{[^}]*grid-column:\s*1;/s);

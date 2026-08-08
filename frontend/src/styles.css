@@ -3419,3 +3419,77 @@ pre,
 .report-topic span small { color: var(--text-secondary); font-size: var(--text-xs); }
 .profile-bar-empty { display: grid; place-items: center; min-height: 22px; color: var(--text-secondary) !important; background: var(--surface-soft) !important; font-size: var(--text-xs); }
 .profile-trend-note { margin: var(--space-3) 0 0; color: var(--text-secondary); font-size: var(--text-xs); line-height: var(--line-body); }
+
+/* P2-1 motion: one restrained ease-out for drawers and short state feedback. */
+.view-interview .evidence-panel,
+.stitch-primary-sidebar {
+  transition:
+    transform var(--motion-standard) var(--motion-ease-out),
+    opacity var(--motion-standard) var(--motion-ease-out),
+    visibility 0s linear var(--motion-standard);
+}
+
+.view-interview .evidence-panel.is-open,
+.stitch-primary-sidebar.is-open {
+  opacity: 1;
+  transition-delay: 0s;
+}
+
+.process-details > summary::before,
+.history-collapsed > summary::before,
+.project-technical-details summary::before {
+  transition: transform var(--motion-fast) var(--motion-ease-out);
+}
+
+.more-menu,
+.ui-more-menu > div,
+.attachment-menu,
+.workspace-feedback,
+.upload-completion,
+.upload-progress,
+.settings-feedback,
+.position-feedback,
+.score-card,
+.streaming-message {
+  animation: p2-fade-in var(--motion-standard) var(--motion-ease-out) both;
+}
+
+@keyframes p2-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@media (min-width: 921px) and (max-width: 1279px), (max-width: 920px) {
+  .view-interview .evidence-panel { opacity: 0; }
+  .view-interview .evidence-panel.is-open { opacity: 1; }
+}
+
+@media (max-width: 920px) {
+  .stitch-primary-sidebar { opacity: 0; }
+  .stitch-primary-sidebar.is-open { opacity: 1; }
+  .mobile-nav-backdrop { animation: p2-fade-in var(--motion-standard) var(--motion-ease-out) both; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .view-interview .evidence-panel,
+  .stitch-primary-sidebar,
+  .process-details > summary::before,
+  .history-collapsed > summary::before,
+  .project-technical-details summary::before {
+    transition: none !important;
+  }
+
+  .more-menu,
+  .ui-more-menu > div,
+  .attachment-menu,
+  .workspace-feedback,
+  .upload-completion,
+  .upload-progress,
+  .settings-feedback,
+  .position-feedback,
+  .score-card,
+  .streaming-message,
+  .mobile-nav-backdrop {
+    animation: none !important;
+  }
+}

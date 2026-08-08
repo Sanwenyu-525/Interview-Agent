@@ -53,6 +53,9 @@
   --control-height: 40px;
   --focus-ring: 0 0 0 3px rgba(152, 84, 35, .2);
   --shadow-soft: 0 10px 26px rgba(64, 52, 37, .07);
+  --motion-fast: 160ms;
+  --motion-standard: 180ms;
+  --motion-ease-out: cubic-bezier(.2, .8, .2, 1);
 
   /* page canvas */
   --page-canvas: var(--background);

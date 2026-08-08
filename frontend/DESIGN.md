@@ -66,8 +66,8 @@ No gradients in core application chrome. No neon, purple, blue glow, or outer-gl
 
 ## 6. Motion & Interaction
 
-- Use 150–220ms ease-out transitions for hover, drawer, selection, and menu states.
-- Use spring-like weight only for drawers and mode switches; keep amplitude restrained.
+- Use 160–200ms ease-out transitions for hover, drawer, selection, and menu states.
+- Animate transform and opacity only; do not use spring or bounce effects.
 - Animate transform and opacity only. Respect prefers-reduced-motion.
 - The online dot may use a very soft 2.5-second opacity pulse. Upload progress may move through named steps once; no infinite spinner after failure.
 - New evaluation sections reveal in a short stagger: score, strengths, weaknesses, next direction.
