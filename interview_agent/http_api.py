@@ -1,4 +1,5 @@
 import json
+import threading
 import time
 import uuid
 import zipfile
@@ -6,7 +7,7 @@ from dataclasses import asdict, is_dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
-from .llm import LLMError
+from .llm import LLMError, StreamSink, reset_stream_sink, set_stream_sink
 from .memory.profile_store import normalize_candidate_id
 from .models import ProfileConflictError, SessionConflictError
 from .service import (
@@ -28,6 +29,7 @@ PUBLIC_API_OPERATIONS = frozenset(
         ("GET", "/projects/{project_id}/knowledge"),
         ("GET", "/positions"),
         ("POST", "/positions"),
+        ("POST", "/positions/ocr"),
         ("GET", "/positions/{position_id}"),
         ("PATCH", "/positions/{position_id}"),
         ("DELETE", "/positions/{position_id}"),
@@ -148,43 +150,88 @@ def create_server(service: InterviewService, host: str = "127.0.0.1", port: int 
 
         def _stream_answer(self, session_id: str, payload: dict):
             self._send_stream_headers()
+            stream_lock = threading.Lock()
+            cancel_event = threading.Event()
+
+            def emit(event: str, data):
+                with stream_lock:
+                    self._send_stream_event(event, data)
+
             try:
-                self._send_stream_event(
-                    "status",
-                    {"stage": "preparing", "message": "正在读取当前问题和项目证据"},
-                )
-                self._send_stream_event("status", {"stage": "evaluating", "message": "正在评价回答"})
+                emit("status", {"stage": "preparing", "message": "正在读取当前问题和项目证据"})
+                emit("status", {"stage": "evaluating", "message": "正在评价回答"})
                 submit_kwargs = {}
                 if "candidate_id" in payload:
                     submit_kwargs["candidate_id"] = normalize_candidate_id(
                         payload["candidate_id"]
                     )
-                state = service.submit_answer(
-                    session_id, str(payload["answer"]), **submit_kwargs
-                )
-                self._send_stream_event(
-                    "status",
-                    {"stage": "reviewed", "message": "评价完成，正在整理评分和改进建议"},
-                )
+                state_holder = {}
+                error_holder = {}
+                usage_holder = {}
+
+                def _run_submit():
+                    def on_usage(usage):
+                        for key in ("prompt_tokens", "completion_tokens", "total_tokens"):
+                            usage_holder[key] = usage_holder.get(key, 0) + int(
+                                usage.get(key) or 0
+                            )
+
+                    sink = StreamSink(
+                        on_token=lambda text: emit("eval_chunk", {"text": text}),
+                        on_usage=on_usage,
+                        cancel_event=cancel_event,
+                    )
+                    token = set_stream_sink(sink)
+                    try:
+                        state_holder["state"] = service.submit_answer(
+                            session_id, str(payload["answer"]), **submit_kwargs
+                        )
+                    except Exception as exc:  # noqa: BLE001 - 统一交给主线程处理
+                        error_holder["error"] = exc
+                    finally:
+                        reset_stream_sink(token)
+
+                worker = threading.Thread(target=_run_submit, daemon=True)
+                worker.start()
+                started_at = time.monotonic()
+                while worker.is_alive():
+                    worker.join(timeout=1)
+                    if worker.is_alive():
+                        elapsed = int(time.monotonic() - started_at)
+                        try:
+                            emit(
+                                "progress",
+                                {
+                                    "stage": "evaluating",
+                                    "message": f"正在评价回答（已等待 {elapsed} 秒）",
+                                    "elapsed": elapsed,
+                                },
+                            )
+                        except (BrokenPipeError, ConnectionResetError):
+                            # 客户端已断开（用户点击了停止），取消后台评价。
+                            cancel_event.set()
+                            worker.join(timeout=5)
+                            break
+                if "error" in error_holder:
+                    exc = error_holder["error"]
+                    if isinstance(exc, LLMError) and str(exc) == "回答生成已取消":
+                        return
+                    raise exc
+                state = state_holder["state"]
+                emit("status", {"stage": "reviewed", "message": "评价完成，正在整理评分和改进建议"})
+                if usage_holder:
+                    emit("usage", usage_holder)
                 reference_answer = getattr(state.evaluation, "reference_answer", "")
                 if reference_answer:
-                    self._send_stream_event(
-                        "status", {"stage": "answering", "message": "正在生成参考回答"}
-                    )
+                    emit("status", {"stage": "answering", "message": "正在生成参考回答"})
                     for index in range(0, len(reference_answer), 24):
-                        self._send_stream_event(
-                            "chunk", {"text": reference_answer[index : index + 24]}
-                        )
+                        emit("chunk", {"text": reference_answer[index : index + 24]})
                         time.sleep(0.018)
-                self._send_stream_event(
-                    "status", {"stage": "next_question", "message": "已生成下一道追问"}
-                )
-                self._send_stream_event(
-                    "done", {"session_id": session_id, "state": state}
-                )
+                emit("status", {"stage": "next_question", "message": "已生成下一道追问"})
+                emit("done", {"session_id": session_id, "state": state})
             except Exception as exc:
                 retryable = isinstance(exc, LLMError)
-                self._send_stream_event(
+                emit(
                     "error",
                     {
                         "error": str(exc),
@@ -356,6 +403,9 @@ def create_server(service: InterviewService, host: str = "127.0.0.1", port: int 
                     return
                 if parts == ["positions"]:
                     self._send(201, service.create_position(payload))
+                    return
+                if parts == ["positions", "ocr"]:
+                    self._send(200, service.ocr_position_jd(payload))
                     return
                 if parts == ["resumes"]:
                     self._send(201, service.create_resume(payload))

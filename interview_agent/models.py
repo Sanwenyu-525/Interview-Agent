@@ -77,6 +77,7 @@ class Evaluation:
     covered_points: tuple[str, ...] = field(default_factory=tuple)
     missing_points: tuple[str, ...] = field(default_factory=tuple)
     reference_answer: str = ""
+    analysis: str = ""
 
     def __post_init__(self):
         object.__setattr__(self, "evidence_ids", tuple(self.evidence_ids))
@@ -92,6 +93,8 @@ class ReviewContext(Mapping[str, Any]):
     evidence_ids: tuple[str, ...] = field(default_factory=tuple)
     review_direction: str = ""
     resume_claims: tuple[str, ...] = field(default_factory=tuple)
+    position_requirement: str = ""
+    position_title: str = ""
 
     def __post_init__(self):
         object.__setattr__(
@@ -111,13 +114,26 @@ class ReviewContext(Mapping[str, Any]):
             return self.review_direction
         if key == "resume_claims":
             return self.resume_claims
+        if key == "position_requirement":
+            return self.position_requirement
+        if key == "position_title":
+            return self.position_title
         raise KeyError(key)
 
     def __iter__(self) -> Iterator[str]:
-        return iter(("evidence", "evidence_ids", "review_direction", "resume_claims"))
+        return iter(
+            (
+                "evidence",
+                "evidence_ids",
+                "review_direction",
+                "resume_claims",
+                "position_requirement",
+                "position_title",
+            )
+        )
 
     def __len__(self) -> int:
-        return 4
+        return 6
 
 
 @dataclass(frozen=True)
@@ -128,6 +144,7 @@ class QuestionResult:
     evidence_ids: tuple[str, ...] = field(default_factory=tuple)
     covered_points: tuple[str, ...] = field(default_factory=tuple)
     missing_points: tuple[str, ...] = field(default_factory=tuple)
+    analysis: str = ""
 
     def __post_init__(self):
         object.__setattr__(self, "evidence_ids", tuple(self.evidence_ids))
@@ -149,6 +166,7 @@ class AnswerRecord:
     topic: str
     level: int
     evaluation: Evaluation
+    analysis: str = ""
 
 
 @dataclass
@@ -167,6 +185,7 @@ class InterviewState:
     question_evidence_ids: tuple[str, ...] = field(default_factory=tuple)
     question_covered_points: tuple[str, ...] = field(default_factory=tuple)
     question_missing_points: tuple[str, ...] = field(default_factory=tuple)
+    question_analysis: str = ""
     candidate_id: str = "default"
     last_submitted_question: str = ""
     last_submitted_answer: str = ""
@@ -174,6 +193,8 @@ class InterviewState:
     completed_at: str = ""
     position_id: str = ""
     position_question_id: str = ""
+    position_requirement: str = ""
+    position_title: str = ""
     resume_claims: tuple[str, ...] = field(default_factory=tuple)
 
     def __post_init__(self):

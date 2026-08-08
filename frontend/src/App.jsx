@@ -282,6 +282,41 @@ function evidenceForState(state, project, topic, evidenceIds) {
   return null;
 }
 
+function languageFromPath(path) {
+  const ext = String(path || "").split(".").pop()?.toLowerCase() || "";
+  const byExtension = {
+    java: "Java",
+    py: "Python",
+    js: "JavaScript",
+    jsx: "React JSX",
+    ts: "TypeScript",
+    tsx: "React TSX",
+    go: "Go",
+    rs: "Rust",
+    c: "C",
+    h: "C 头文件",
+    cpp: "C++",
+    hpp: "C++ 头文件",
+    cs: "C#",
+    kt: "Kotlin",
+    vue: "Vue",
+    html: "HTML",
+    css: "CSS",
+    scss: "SCSS",
+    less: "Less",
+    json: "JSON",
+    xml: "XML",
+    yml: "YAML",
+    yaml: "YAML",
+    md: "Markdown",
+    sql: "SQL",
+    sh: "Shell",
+    bat: "Batch",
+    gradle: "Gradle",
+  };
+  return byExtension[ext] || "";
+}
+
 function normalizeEvidence(raw, evidenceIds) {
   if (!raw) {
     return { available: false, ids: evidenceIds, file: "", language: "", lines: [], explanation: "", locator: "", lineStart: 1 };
@@ -295,11 +330,12 @@ function normalizeEvidence(raw, evidenceIds) {
     : excerpt
       ? String(excerpt).split("\n")
       : [];
+  const file = firstValue(raw.source_path, raw.file, raw.path);
   return {
     available: true,
     ids: evidenceIds,
-    file: firstValue(raw.source_path, raw.file, raw.path),
-    language: firstValue(raw.language, raw.metadata?.language),
+    file,
+    language: firstValue(raw.language, raw.metadata?.language, languageFromPath(file)),
     lines,
     explanation: firstValue(raw.explanation, raw.description, raw.locator, raw.kind),
     locator,
@@ -326,8 +362,29 @@ function processStepsForRecord(record) {
   ];
 }
 
+function TokenUsageCircle({ usage }) {
+  const total = Number(usage?.total_tokens) || 0;
+  const completion = Number(usage?.completion_tokens) || 0;
+  const radius = 15;
+  const circumference = 2 * Math.PI * radius;
+  const filled = total > 0 ? (completion / total) * circumference : 0;
+  const label = total >= 1000 ? `${(total / 1000).toFixed(1)}k` : String(total);
+  return (
+    <svg className="token-usage-circle" width="40" height="40" viewBox="0 0 40 40" role="img" aria-label={`Token 用量 ${total}`}>
+      <circle className="token-usage-track" cx="20" cy="20" r={radius} />
+      <circle className="token-usage-fill" cx="20" cy="20" r={radius} strokeDasharray={`${filled} ${circumference}`} />
+      <text className="token-usage-label" x="20" y="20" textAnchor="middle" dominantBaseline="central">{label}</text>
+    </svg>
+  );
+}
+
 function toUiSession(sessionId, state = {}, knowledge = null, status = null) {
-  const project = state.project || knowledge || {};
+  let project = state.project || knowledge || {};
+  if (knowledge && knowledge.project_id && state.project?.project_id === knowledge.project_id) {
+    // 项目重新分析后，用最新知识库的证据覆盖会话快照中的旧证据。
+    const mergedEvidence = { ...(state.project.evidence || {}), ...(knowledge.evidence || {}) };
+    project = { ...state.project, evidence: mergedEvidence };
+  }
   const topic = state.current_topic || {};
   const history = Array.isArray(state.history) ? state.history : [];
   const evidenceIds = evidenceIdsForState(state, topic);
@@ -364,6 +421,7 @@ function toUiSession(sessionId, state = {}, knowledge = null, status = null) {
     question: state.question || "",
     context: firstValue(state.context, topic.description),
     instruction: firstValue(state.instruction, state.question_guidance),
+    questionAnalysis: state.question_analysis || "",
     evidence: normalizeEvidence(rawEvidence, evidenceIds),
     evidenceIds,
     evaluation: state.evaluation || null,
@@ -791,15 +849,18 @@ function EmptyInterviewView({ onUploaded, initialError }) {
   );
 }
 
-function InterviewComposer({ answer = "", setAnswer = () => {}, onKeyDown, onSubmit, isSubmitting, error, onUploaded, onCreateTask, canCreateTask = false, workspaceName = "", initialError = "", initialCompletion = "", disabled = false, defaultUploadOpen = false, placeholder = "在这里回答当前问题…" }) {
+function InterviewComposer({ answer = "", setAnswer = () => {}, onKeyDown, onSubmit, onStop, isSubmitting, error, onUploaded, onCreateTask, canCreateTask = false, workspaceName = "", initialError = "", initialCompletion = "", disabled = false, defaultUploadOpen = false, placeholder = "在这里回答当前问题…" }) {
   return (
     <div className="chat-composer-wrap">
       <div className="chat-composer-label"><ChatCircleText size={17} weight="duotone" /><span>{disabled ? "和 Agent 开始对话" : "你的回答"}</span>{!disabled && <small>{answer.length} 字</small>}</div>
       <div className={`chat-composer ${error ? "has-error" : ""} ${isSubmitting ? "is-busy" : ""}`} aria-busy={isSubmitting}>
-        <textarea value={answer} onChange={(event) => setAnswer(event.target.value)} onKeyDown={onKeyDown} placeholder={placeholder} aria-label={disabled ? "和 Agent 对话" : "你的回答"} disabled={disabled || isSubmitting} />
+        <textarea value={answer} onChange={(event) => setAnswer(event.target.value)} onKeyDown={onKeyDown} placeholder={placeholder} aria-label={disabled ? "和 Agent 对话" : "你的回答"} disabled={disabled} />
         <div className="chat-composer-footer">
           <div className="composer-tools" aria-label="聊天工具"><ProjectUploadControl onUploaded={onUploaded} onCreateTask={onCreateTask} canCreateTask={canCreateTask} workspaceName={workspaceName} initialError={initialError} initialCompletion={initialCompletion} defaultOpen={defaultUploadOpen} /></div>
-          <button className="primary-button composer-submit" type="button" onClick={onSubmit} disabled={disabled || isSubmitting} aria-label={isSubmitting ? "正在分析回答" : "提交回答"}>{isSubmitting ? "正在分析..." : "提交回答"} <ArrowUp size={18} weight="bold" /></button>
+          <div className="composer-actions">
+            {isSubmitting && <button className="stop-button composer-stop" type="button" onClick={onStop} aria-label="终止回答"><Square size={13} weight="fill" /> 停止回答</button>}
+            <button className="primary-button composer-submit" type="button" onClick={onSubmit} disabled={disabled || isSubmitting} aria-label={isSubmitting ? "正在分析回答" : "提交回答"}>{isSubmitting ? "正在分析..." : "提交回答"} <ArrowUp size={18} weight="bold" /></button>
+          </div>
         </div>
       </div>
       {error && <div className="form-error"><WarningCircle size={17} /> {error}</div>}
@@ -1271,7 +1332,7 @@ function SettingsView({ settings, profiles, profilesLoading, isLoading, isSaving
       </section>
       <section className="settings-panel settings-runtime-panel">
         <div className="settings-row"><span><strong>面试引擎</strong><small>Python API + SQLite 本地会话</small></span><span className="setting-value is-online"><span className="status-dot" /> 在线</span></div>
-        <div className="settings-row"><span><strong>提交回答</strong><small>评分和下一题由后端返回</small></span><kbd>Ctrl / ⌘ + Enter</kbd></div>
+        <div className="settings-row"><span><strong>提交回答</strong><small>评分和下一题由后端返回；Ctrl / ⌘ + Enter 换行</small></span><kbd>Enter</kbd></div>
         <div className="settings-row"><span><strong>数据存储</strong><small>项目、会话和应用配置由后端管理</small></span><span className="setting-value">SQLite</span></div>
       </section>
       <div className="settings-note"><Sparkle size={18} weight="duotone" /><span>保存后当前后端会立即切换模型；重启后从 SQLite 恢复配置。</span></div>
@@ -1295,10 +1356,13 @@ function App() {
   const [isCreatingTask, setIsCreatingTask] = useState(false);
   const [busyTaskId, setBusyTaskId] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [pendingAnswer, setPendingAnswer] = useState("");
   const [isCompletingSession, setIsCompletingSession] = useState(false);
   const [streamingReply, setStreamingReply] = useState("");
   const [streamingStatus, setStreamingStatus] = useState("");
   const [streamingSteps, setStreamingSteps] = useState([]);
+  const [streamingEval, setStreamingEval] = useState("");
+  const [tokenUsage, setTokenUsage] = useState(null);
   const [isEvidenceOpen, setIsEvidenceOpen] = useState(false);
   const [isEvidenceCollapsed, setIsEvidenceCollapsed] = useState(false);
   const [contextRailWidth, setContextRailWidth] = useState(defaultContextRailWidth);
@@ -1325,6 +1389,8 @@ function App() {
   const [candidateProfileError, setCandidateProfileError] = useState("");
   const startupPromiseRef = useRef(null);
   const moreMenuRef = useRef(null);
+  const streamAbortRef = useRef(null);
+  const messageListRef = useRef(null);
 
   function adoptLoadedSession(loaded) {
     if (loaded.needsUpload) {
@@ -1410,6 +1476,11 @@ function App() {
       document.removeEventListener("keydown", handleMenuKeyDown);
     };
   }, [isMoreMenuOpen]);
+
+  useEffect(() => {
+    const list = messageListRef.current;
+    if (list) list.scrollTop = list.scrollHeight;
+  }, [history, isSubmitting, streamingReply, streamingEval, streamingStatus, session]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1570,20 +1641,30 @@ function App() {
       setError("先写下你的思路，再提交回答。");
       return;
     }
+    const submittedAnswer = answer.trim();
     setError("");
+    setAnswer("");
+    setPendingAnswer(submittedAnswer);
     setIsSubmitting(true);
     setStreamingReply("");
     setStreamingStatus("正在评价回答");
     setStreamingSteps([]);
+    setStreamingEval("");
+    setTokenUsage(null);
+    const controller = new AbortController();
+    streamAbortRef.current = controller;
     try {
-      const result = await submitAnswerStream(answer, session, (event, payload) => {
+      const result = await submitAnswerStream(submittedAnswer, session, (event, payload) => {
         if (event === "status") {
           const message = payload.message || "正在处理回答";
           setStreamingStatus(message);
           setStreamingSteps((current) => current.includes(message) ? current : [...current, message]);
         }
+        if (event === "progress") setStreamingStatus(payload.message || "正在评价回答");
+        if (event === "eval_chunk") setStreamingEval((current) => current + (payload.text || ""));
+        if (event === "usage") setTokenUsage(payload);
         if (event === "chunk") setStreamingReply((current) => current + (payload.text || ""));
-      });
+      }, controller.signal);
       const state = result.state || {};
       setEvaluation(state.evaluation || null);
       setHistory(state.history || []);
@@ -1591,15 +1672,26 @@ function App() {
       setSessionReport(null);
       setCandidateProfile(null);
       setSelectedStructureItem(state.current_topic?.name || "");
-      setAnswer("");
     } catch (cause) {
-      setError(`提交失败：${errorMessage(cause)}`);
+      if (cause?.name === "AbortError") {
+        setAnswer(submittedAnswer);
+        setError("");
+      } else {
+        setError(`提交失败：${errorMessage(cause)}`);
+      }
     } finally {
       setIsSubmitting(false);
       setStreamingReply("");
       setStreamingStatus("");
       setStreamingSteps([]);
+      setStreamingEval("");
+      setPendingAnswer("");
+      streamAbortRef.current = null;
     }
+  }
+
+  function handleStopAnswer() {
+    streamAbortRef.current?.abort();
   }
 
   async function handleCompleteSession() {
@@ -1943,7 +2035,7 @@ function App() {
   }
 
   function handleKeyDown(event) {
-    if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+    if (event.key === "Enter" && !event.shiftKey && !event.metaKey && !event.ctrlKey && !event.altKey) {
       event.preventDefault();
       handleSubmit();
     }
@@ -2017,14 +2109,14 @@ function App() {
                 </header>
                 {interactionNotice && <div className="workspace-feedback" role="status" aria-live="polite">{interactionNotice}</div>}
              <div className="workspace-content agent-workspace-content">
-               <div className="agent-thread">
-                 <div className="agent-thread-heading"><span className="agent-avatar"><Sparkle size={17} weight="duotone" /></span><span><strong>Interview Agent</strong><small>正在围绕 {session.topic || "当前项目"} 提问</small></span><span className="thread-state">第 {session.questionNumber || "—"} 题</span></div>
-                 <div className="agent-message-list">
+                 <div className="agent-thread">
+                  <div className="agent-thread-heading"><span className="agent-avatar"><Sparkle size={17} weight="duotone" /></span><span><strong>Interview Agent</strong><small>正在围绕 {session.topic || "当前项目"} 提问</small></span><span className="thread-state">第 {session.questionNumber || "—"} 题</span></div>
+                  <div className="agent-message-list" ref={messageListRef}>
                    {history.map((record, index) => (
                      <div className="history-pair" key={`${record.question || "question"}-${index}`}>
                        <article className="agent-message agent-message-agent history-message">
                          <span className="agent-avatar"><Sparkle size={17} weight="duotone" /></span>
-                         <div className="agent-message-body"><span className="message-meta">面试官 · 第 {index + 1} 题</span><div className="message-bubble history-question-bubble"><p>{record.question || "历史问题"}</p></div></div>
+                         <div className="agent-message-body"><span className="message-meta">面试官 · 第 {index + 1} 题</span><div className="message-bubble history-question-bubble"><p>{record.question || "历史问题"}</p></div>{record.analysis && <details className="process-details"><summary><span>出题思路</span></summary><p className="analysis-content">{record.analysis}</p></details>}</div>
                        </article>
                            <article className="agent-message agent-message-user history-message">
                              <span className="agent-avatar user-avatar">你</span>
@@ -2032,8 +2124,9 @@ function App() {
                            </article>
                            {record.evaluation && <details className="history-evaluation">
                              <summary><span>评价与处理过程</span><strong>评分 {record.evaluation.score ?? "—"} / 100</strong></summary>
-                             <div className="history-evaluation-body">
-                               <details className="process-details"><summary>处理过程</summary><ol className="process-step-list">{processStepsForRecord(record).map((step, stepIndex) => <li key={`${step}-${stepIndex}`}>{step}</li>)}</ol></details>
+<div className="history-evaluation-body">
+                                {record.evaluation.analysis && <details className="process-details"><summary><span>思考过程</span></summary><p className="analysis-content">{record.evaluation.analysis}</p></details>}
+                                <details className="process-details"><summary>处理过程</summary><ol className="process-step-list">{processStepsForRecord(record).map((step, stepIndex) => <li key={`${step}-${stepIndex}`}>{step}</li>)}</ol></details>
                                {record.evaluation.feedback && <p className="history-feedback">{record.evaluation.feedback}</p>}
                                {(record.evaluation.strengths || []).map((strength) => <div className="history-feedback-point is-strength" key={`strength-${strength}`}><CheckCircle size={15} weight="fill" /><span>{strength}</span></div>)}
                                {(record.evaluation.weaknesses || []).map((weakness) => <div className="history-feedback-point is-weakness" key={`weakness-${weakness}`}><WarningCircle size={15} weight="fill" /><span>{weakness}</span></div>)}
@@ -2045,31 +2138,37 @@ function App() {
                        </article>}
                      </div>
                    ))}
-                       {isSubmitting && <article className="agent-message agent-message-agent streaming-message" aria-live="polite">
-                         <span className="agent-avatar"><Sparkle size={17} weight="duotone" /></span>
-                         <div className="agent-message-body"><span className="message-meta">面试官 · {streamingReply ? "参考回答 · 流式输出" : "处理中"}</span><div className="message-bubble"><p>{streamingReply || streamingStatus}<span className="streaming-cursor" aria-hidden="true" /></p></div><details className="process-details" open><summary><span>处理过程</span><small>{streamingStatus || "正在处理"}</small></summary><ol className="process-step-list">{(streamingSteps.length > 0 ? streamingSteps : [streamingStatus || "正在处理回答"]).map((step, index) => <li key={`${step}-${index}`}>{step}</li>)}</ol></details></div>
-                       </article>}
-                   <article className="agent-message agent-message-agent">
-                     <span className="agent-avatar"><Sparkle size={17} weight="duotone" /></span>
-                     <div className="agent-message-body"><span className="message-meta">面试官 · 当前问题</span><div className="message-bubble"><h1>{session.question || "暂无问题"}</h1>{session.context && <p>{session.context}</p>}{session.instruction && <p>{session.instruction}</p>}</div></div>
-                   </article>
+<article className="agent-message agent-message-agent">
+                      <span className="agent-avatar"><Sparkle size={17} weight="duotone" /></span>
+                      <div className="agent-message-body"><span className="message-meta">面试官 · 当前问题</span><div className="message-bubble"><h1>{session.question || "暂无问题"}</h1>{session.context && <p>{session.context}</p>}{session.instruction && <p>{session.instruction}</p>}</div>{session.questionAnalysis && <details className="process-details"><summary><span>出题思路</span></summary><p className="analysis-content">{session.questionAnalysis}</p></details>}</div>
+                    </article>
+                    {isSubmitting && <>
+                      <article className="agent-message agent-message-user history-message">
+                        <span className="agent-avatar user-avatar">你</span>
+                        <div className="agent-message-body"><span className="message-meta">你的回答 · 已提交</span><div className="message-bubble user-message-bubble"><p>{pendingAnswer || "未填写回答"}</p></div></div>
+                      </article>
+                      <article className="agent-message agent-message-agent streaming-message" aria-live="polite">
+                        <span className="agent-avatar"><Sparkle size={17} weight="duotone" /></span>
+                        <div className="agent-message-body"><div className="streaming-heading"><span className="message-meta">面试官 · {streamingReply ? "参考回答 · 流式输出" : streamingEval ? "思考与评价 · 实时输出" : streamingStatus || "处理中"}</span>{tokenUsage && <TokenUsageCircle usage={tokenUsage} />}</div><div className="message-bubble"><p className={streamingEval && !streamingReply ? "eval-stream-text" : ""}>{streamingReply || streamingEval || streamingStatus || "正在评价回答"}<span className="streaming-cursor" aria-hidden="true" /></p></div>{streamingSteps.length > 0 && <details className="process-details" open><summary><span>处理过程</span><small>{streamingStatus || "正在处理"}</small></summary><ol className="process-step-list">{(streamingSteps.length > 0 ? streamingSteps : [streamingStatus || "正在处理回答"]).map((step, index) => <li key={`${step}-${index}`}>{step}</li>)}</ol></details>}</div>
+                      </article>
+                    </>}
                    {history.length > 0 && <div className="agent-system-message"><CheckCircle size={18} /><span><strong>已完成 {history.length} 次回答</strong><small>下一步：{directionLabel(session.nextDirection)}</small></span></div>}
                  </div>
                </div>
                 {session.sessionState === "completed" ? (
                   <div className="agent-system-message session-completed-message"><CheckCircle size={18} weight="fill" /><span><strong>本次会话已结束</strong><small>回答已锁定，可以查看完整复盘报告。</small></span><button className="quiet-button" type="button" onClick={() => setActiveView("report")}>查看报告</button></div>
                 ) : (
-                  <InterviewComposer answer={answer} setAnswer={setAnswer} onKeyDown={handleKeyDown} onSubmit={handleSubmit} isSubmitting={isSubmitting} error={error} onUploaded={handleUploaded} onCreateTask={handleCreateTask} canCreateTask={Boolean(sessionProjectId(session))} workspaceName={workspaceMeta.name} initialCompletion={uploadCompletion} />
+                  <InterviewComposer answer={answer} setAnswer={setAnswer} onKeyDown={handleKeyDown} onSubmit={handleSubmit} onStop={handleStopAnswer} isSubmitting={isSubmitting} error={error} onUploaded={handleUploaded} onCreateTask={handleCreateTask} canCreateTask={Boolean(sessionProjectId(session))} workspaceName={workspaceMeta.name} initialCompletion={uploadCompletion} />
                 )}
              </div>
                 {!isEvidenceCollapsed && <div className="workspace-resizer is-right" role="separator" aria-label="调整证据面板宽度" aria-orientation="vertical" aria-valuemin={MIN_EVIDENCE_PANEL_WIDTH} aria-valuemax={MAX_EVIDENCE_PANEL_WIDTH} aria-valuenow={evidencePanelWidth} tabIndex={0} {...rightResize.handlers} />}
           </section>
 
           <aside id="evidence-drawer" className={`evidence-panel ${isEvidenceOpen ? "is-open" : ""} ${isEvidenceCollapsed ? "is-collapsed" : ""}`} aria-label="项目证据和当前评估">
-            <button className="evidence-expand-button" type="button" aria-label="展开证据面板" onClick={() => setIsEvidenceCollapsed(false)}><CaretLeft size={17} /><span>证据</span></button>
+            <button className="evidence-expand-button" type="button" aria-label="展开证据面板" onClick={() => setIsEvidenceCollapsed(false)}><CaretLeft size={17} /><span className="evidence-label"><b>证</b><b>据</b></span></button>
             <div className="panel-header"><h2>证据 <span>（{session.evidenceIds.length}）</span></h2><div className="panel-header-actions">{confidenceLabel(session.evidence.confidence) && <span className="confidence-badge">置信度 {confidenceLabel(session.evidence.confidence)}</span>}<button className="text-button" type="button" onClick={handleOpenProjectKnowledge}>查看全部 <ArrowRight size={15} /></button><button className="icon-button evidence-collapse-button" type="button" aria-label="收起证据面板" onClick={() => setIsEvidenceCollapsed(true)}><CaretRight size={18} /></button><button className="icon-button evidence-close-button" type="button" aria-label="关闭证据面板" onClick={() => { setIsEvidenceOpen(false); setIsRubricOpen(false); }}><X size={18} /></button></div></div>
             <section className="evidence-card">{session.evidence.available ? <><div className="card-kicker"><FileCode size={18} weight="duotone" /> 代码证据</div><div className="file-heading"><strong>{session.evidence.file || "未命名证据"}</strong><span>{session.evidence.language || "未知语言"}</span></div>{session.evidence.lines.length > 0 ? <div className="code-block">{session.evidence.lines.map((line, index) => <div className={line.includes("//") ? "code-line comment" : "code-line"} key={`${line}-${index}`}><span>{String(session.evidence.lineStart + index).padStart(2, "0")}</span><code>{line}</code></div>)}</div> : <div className="empty-state">证据没有可展示的代码片段</div>}<p>{session.evidence.explanation || "暂无证据解释"}</p><div className="source-row"><span>来源：API evidence id {session.evidenceIds[0] || "—"}</span><DotsThree size={19} /></div></> : <div className="empty-state"><FileCode size={22} /> 暂无证据</div>}</section>
-                <section className="evaluation-section"><div className="evaluation-title"><h2>当前评估</h2><span>（提交后更新）</span></div>{evaluation ? <div className="score-card"><div className="score-topline"><span>综合评分</span><span className="score-direction">{directionLabel(session.nextDirection)}</span></div><strong className="score-number">{evaluation.score ?? "—"}<small> / 100</small></strong>{(evaluation.strengths || []).map((strength) => <div className="feedback-row strength" key={strength}><CheckCircle size={18} weight="fill" /><span>{strength}</span></div>)}{(evaluation.weaknesses || []).map((weakness) => <div className="feedback-row weakness" key={weakness}><WarningCircle size={18} weight="fill" /><span>{weakness}</span></div>)}{evaluation.feedback && <p>{evaluation.feedback}</p>}</div> : <div className="evaluation-card"><div className="empty-state">暂无评价</div></div>}{session.capabilityHints.length > 0 && <div className="capability-hints"><strong>能力提示</strong>{session.capabilityHints.map((hint) => <span key={hint}>{hint}</span>)}</div>}<p className="evaluation-note">评价和能力提示来自后端 evaluation。</p></section>
+                <section className="evaluation-section"><div className="evaluation-title"><h2>当前评估</h2><span>（提交后更新）</span></div>{evaluation ? <div className="score-card"><div className="score-topline"><span>综合评分</span><span className="score-direction">{directionLabel(session.nextDirection)}</span></div><strong className="score-number">{evaluation.score ?? "—"}<small> / 100</small></strong>{tokenUsage && <div className="evaluation-token-row"><TokenUsageCircle usage={tokenUsage} size={34} /><span>本次回答 Token 用量</span></div>}{(evaluation.strengths || []).map((strength) => <div className="feedback-row strength" key={strength}><CheckCircle size={18} weight="fill" /><span>{strength}</span></div>)}{(evaluation.weaknesses || []).map((weakness) => <div className="feedback-row weakness" key={weakness}><WarningCircle size={18} weight="fill" /><span>{weakness}</span></div>)}{evaluation.feedback && <p>{evaluation.feedback}</p>}{evaluation.analysis && <details className="process-details score-analysis"><summary><span>思考过程</span></summary><p className="analysis-content">{evaluation.analysis}</p></details>}</div> : <div className="evaluation-card"><div className="empty-state">暂无评价</div></div>}{session.capabilityHints.length > 0 && <div className="capability-hints"><strong>能力提示</strong>{session.capabilityHints.map((hint) => <span key={hint}>{hint}</span>)}</div>}<p className="evaluation-note">评价和能力提示来自后端 evaluation。</p></section>
             <div className="evidence-footer"><button className="quiet-button" type="button" aria-expanded={isRubricOpen} aria-controls="evaluation-rubric" onClick={() => setIsRubricOpen((open) => !open)}><GearSix size={18} /> 评分标准</button><button className="quiet-button" type="button" onClick={handleOpenProjectKnowledge}><ArrowUpRight size={18} /> 查看项目知识</button></div>
             {isRubricOpen && <section id="evaluation-rubric" className="rubric-panel" aria-label="评分标准"><div className="rubric-heading"><div><p className="view-kicker">REVIEW RUBRIC</p><h3>评分标准</h3></div><button className="icon-button" type="button" aria-label="关闭评分标准" onClick={() => setIsRubricOpen(false)}><X size={17} /></button></div><div className="rubric-list"><div><strong>0–59 分</strong><span>基础澄清</span><small>补充项目事实、基础概念和术语。</small></div><div><strong>60–79 分</strong><span>深入实现</span><small>围绕调用链、实现细节和证据继续追问。</small></div><div><strong>80–100 分</strong><span>架构权衡</span><small>进入容量、稳定性、风险和系统演进讨论。</small></div></div></section>}
           </aside>

@@ -149,6 +149,7 @@ def _validate_evaluation(payload, field_name: str) -> None:
         "evidence_ids",
         "covered_points",
         "missing_points",
+        "analysis",
     }
     unknown = set(payload) - allowed
     if unknown:
@@ -176,6 +177,8 @@ def _validate_evaluation(payload, field_name: str) -> None:
         raise ValueError(
             f"session payload field {field_name}.reference_answer must be a string"
         )
+    if not isinstance(payload.get("analysis", ""), str):
+        raise ValueError(f"session payload field {field_name}.analysis must be a string")
 
 
 def _validate_state_payload(payload: dict) -> None:
@@ -198,6 +201,8 @@ def _validate_state_payload(payload: dict) -> None:
     _require_session_type(payload, "position_id", str, required=False)
     _require_session_type(payload, "resume_claims", list, required=False)
     _require_session_type(payload, "position_question_id", str, required=False)
+    _require_session_type(payload, "position_requirement", str, required=False)
+    _require_session_type(payload, "position_title", str, required=False)
 
     _require_session_type(project, "project_id", int)
     _require_session_type(project, "project_name", str, required=False)
@@ -225,6 +230,7 @@ def _validate_state_payload(payload: dict) -> None:
             isinstance(item, str) for item in values
         ):
             raise ValueError(f"session payload field {name} must be a string list")
+    _require_session_type(payload, "question_analysis", str, required=False)
 
     evaluation = payload.get("evaluation")
     if evaluation is not None:
@@ -238,6 +244,7 @@ def _validate_state_payload(payload: dict) -> None:
         for name in ("question", "answer", "topic"):
             _require_session_type(record, name, str)
         _require_session_type(record, "level", int)
+        _require_session_type(record, "analysis", str, required=False)
         if "evaluation" not in record:
             raise ValueError(
                 f"session payload missing required field: history[{index}].evaluation"
@@ -256,6 +263,7 @@ def _state_from_dict(payload: dict) -> InterviewState:
                 topic=record["topic"],
                 level=int(record["level"]),
                 evaluation=Evaluation(**record["evaluation"]),
+                analysis=record.get("analysis", ""),
             )
             for record in payload.get("history", [])
         ]
@@ -274,6 +282,7 @@ def _state_from_dict(payload: dict) -> InterviewState:
             question_evidence_ids=list(payload.get("question_evidence_ids", [])),
             question_covered_points=list(payload.get("question_covered_points", [])),
             question_missing_points=list(payload.get("question_missing_points", [])),
+            question_analysis=payload.get("question_analysis", ""),
             candidate_id=str(payload.get("candidate_id", "default")),
             last_submitted_question=payload.get("last_submitted_question", ""),
             last_submitted_answer=payload.get("last_submitted_answer", ""),
@@ -281,6 +290,8 @@ def _state_from_dict(payload: dict) -> InterviewState:
             completed_at=payload.get("completed_at", ""),
             position_id=payload.get("position_id", ""),
             position_question_id=payload.get("position_question_id", ""),
+            position_requirement=payload.get("position_requirement", ""),
+            position_title=payload.get("position_title", ""),
             resume_claims=list(payload.get("resume_claims", [])),
         )
     except (AttributeError, KeyError, TypeError) as exc:

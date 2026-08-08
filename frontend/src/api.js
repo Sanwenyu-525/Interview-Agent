@@ -28,11 +28,12 @@ async function request(path, options) {
   return response.json();
 }
 
-async function streamRequest(path, options, onEvent = () => {}) {
+async function streamRequest(path, options, onEvent = () => {}, signal) {
   if (!API_BASE) return null;
   const response = await fetch(`${API_BASE}${path}`, {
     headers: { "Content-Type": "application/json" },
     ...options,
+    signal,
   });
   if (!response.ok) {
     const error = new Error(`API request failed: ${response.status}`);
@@ -137,6 +138,13 @@ export function deletePosition(positionId) {
 
 export function regeneratePositionQuestions(positionId) {
   return request(`/positions/${encodeURIComponent(positionId)}/questions`, { method: "POST" });
+}
+
+export function ocrPositionJd(imageBase64, mimeType = "image/png") {
+  return request("/positions/ocr", {
+    method: "POST",
+    body: JSON.stringify({ image_base64: imageBase64, mime_type: mimeType }),
+  });
 }
 
 export function getResumes({ candidateId, limit } = {}) {
@@ -327,12 +335,12 @@ export function submitAnswer(answer, session) {
   });
 }
 
-export function submitAnswerStream(answer, session, onEvent) {
+export function submitAnswerStream(answer, session, onEvent, signal) {
   if (!session.sessionId) throw new Error("Missing interview session ID");
   return streamRequest(`/sessions/${session.sessionId}/answers/stream`, {
     method: "POST",
     body: JSON.stringify({ answer }),
-  }, onEvent);
+  }, onEvent, signal);
 }
 
 export async function startInterviewSession(projectId, candidateId, reviewMode, title, topic, positionId, positionQuestionId) {

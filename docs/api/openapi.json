@@ -99,6 +99,18 @@
         }
       }
     },
+    "/positions/ocr": {
+      "post": {
+        "tags": ["Positions"],
+        "operationId": "ocrPositionJd",
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/OcrPositionJdRequest"}}}},
+        "responses": {
+          "200": {"description": "已从图片中识别出 JD 文本", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/OcrPositionJdResponse"}}}},
+          "400": {"$ref": "#/components/responses/InvalidRequest"},
+          "502": {"$ref": "#/components/responses/UpstreamError"}
+        }
+      }
+    },
     "/positions/{position_id}": {
       "parameters": [{"$ref": "#/components/parameters/PositionId"}],
       "get": {
@@ -306,7 +318,7 @@
         "operationId": "submitAnswerStream",
         "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/SubmitAnswerRequest"}}}},
         "responses": {
-          "200": {"description": "回答评价和参考回答以 Server-Sent Events 流式返回", "content": {"text/event-stream": {"schema": {"type": "string"}}}},
+          "200": {"description": "回答评价和参考回答以 Server-Sent Events 流式返回；事件包括 status（阶段与提示文案）、progress（每秒的等待秒数与文案）、eval_chunk（评价思考过程的实时输出增量）、usage（本次提交的 prompt/completion/total token 用量）、chunk（参考回答增量文本）和 done（携带完整会话 state）；处理失败时发送 error 事件", "content": {"text/event-stream": {"schema": {"type": "string"}}}},
           "400": {"$ref": "#/components/responses/InvalidRequest"},
           "404": {"$ref": "#/components/responses/NotFound"},
           "409": {"$ref": "#/components/responses/Conflict"},
@@ -622,6 +634,24 @@
           "count": {"type": "integer", "minimum": 0}
         }
       },
+      "OcrPositionJdRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["image_base64"],
+        "properties": {
+          "image_base64": {"type": "string", "minLength": 1, "description": "图片的 Base64 编码；解码后不超过 10MB"},
+          "mime_type": {"type": "string", "enum": ["image/png", "image/jpeg", "image/webp", "image/gif"], "default": "image/png"}
+        }
+      },
+      "OcrPositionJdResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["text", "chars"],
+        "properties": {
+          "text": {"type": "string", "minLength": 1, "description": "从图片中提取的 JD 原文文本"},
+          "chars": {"type": "integer", "minimum": 1}
+        }
+      },
       "CreatePositionRequest": {
         "type": "object",
         "additionalProperties": false,
@@ -842,7 +872,8 @@
           "reference_answer": {"type": "string", "description": "回答未达到 100 分时由后端生成的项目证据参考回答"},
           "evidence_ids": {"type": "array", "items": {"type": "string"}},
           "covered_points": {"type": "array", "items": {"type": "string"}},
-          "missing_points": {"type": "array", "items": {"type": "string"}}
+          "missing_points": {"type": "array", "items": {"type": "string"}},
+          "analysis": {"type": "string", "description": "评分前的证据比对与推理过程（LLM 模式下生成）"}
         }
       },
       "InterviewState": {
@@ -863,6 +894,7 @@
           "question_evidence_ids": {"type": "array", "items": {"type": "string"}},
           "question_covered_points": {"type": "array", "items": {"type": "string"}},
           "question_missing_points": {"type": "array", "items": {"type": "string"}},
+          "question_analysis": {"type": "string", "description": "当前问题的出题推理过程（LLM 模式下生成）"},
           "candidate_id": {"type": "string"},
           "last_submitted_question": {"type": "string"},
           "last_submitted_answer": {"type": "string"},

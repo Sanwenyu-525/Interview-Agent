@@ -243,6 +243,70 @@ class LLMTests(unittest.TestCase):
             "OrderService 的 createOrder 方法在事务失败时如何保证订单一致？",
         )
 
+    def test_question_generator_asks_for_analysis_before_asking(self):
+        client = client_with(
+            [
+                json.dumps(
+                    {
+                        "analysis": "证据已覆盖流程，薄弱点在失败重试",
+                        "question": "失败重试时如何保证不丢消息？",
+                        "evidence_ids": ["e1"],
+                        "covered_points": [],
+                        "missing_points": [],
+                    },
+                    ensure_ascii=False,
+                )
+            ]
+        )
+        generator = LlmQuestionGenerator(client)
+
+        result = generator.generate(
+            topic=sample_project().topics[0],
+            project=sample_project(),
+            level=2,
+            history=[],
+            evidence_ids=("e1",),
+        )
+
+        content = client._llm.calls[0][0][1].content
+        self.assertIn("先分析再提问", content)
+        self.assertIn("analysis", content)
+        self.assertEqual(result.question, "失败重试时如何保证不丢消息？")
+        self.assertEqual(result.analysis, "证据已覆盖流程，薄弱点在失败重试")
+
+    def test_evaluator_asks_for_analysis_before_scoring(self):
+        client = client_with(
+            [
+                json.dumps(
+                    {
+                        "analysis": "回答覆盖了事务边界，但缺重试策略证据",
+                        "score": 85,
+                        "strengths": ["说明了事务边界"],
+                        "weaknesses": [],
+                        "feedback": "",
+                        "evidence_ids": ["e1"],
+                        "covered_points": ["事务边界"],
+                        "missing_points": [],
+                    },
+                    ensure_ascii=False,
+                )
+            ]
+        )
+        evaluator = LlmEvaluator(client)
+
+        result = evaluator.evaluate(
+            question="如何保证一致性？",
+            answer="通过事务边界保证。",
+            topic=sample_project().topics[0],
+            project=sample_project(),
+            evidence_ids=("e1",),
+        )
+
+        content = client._llm.calls[0][0][1].content
+        self.assertIn("先比对再评分", content)
+        self.assertIn("analysis", content)
+        self.assertEqual(result.analysis, "回答覆盖了事务边界，但缺重试策略证据")
+
     def test_question_generator_falls_back_when_response_omits_question(self):
         client = client_with([json.dumps({"evidence_ids": ["e1"]}, ensure_ascii=False)])
         generator = LlmQuestionGenerator(client)

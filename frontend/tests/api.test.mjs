@@ -25,6 +25,7 @@ import {
   getCandidateProfile,
   getSession,
   openProjectDirectory,
+  ocrPositionJd,
   pickProjectDirectory,
   reusePromise,
   renameSession,
@@ -177,6 +178,28 @@ test("position preparation API supports list, create, update, regenerate, and de
       ["http://127.0.0.1:8000/positions/position-1/questions", "POST"],
       ["http://127.0.0.1:8000/positions/position-1", "DELETE"],
     ]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("ocrPositionJd posts the image to the OCR endpoint", async () => {
+  const originalFetch = globalThis.fetch;
+  let request;
+  globalThis.fetch = async (url, options) => {
+    request = { url, options };
+    return new Response(JSON.stringify({ text: "岗位职责：开发", chars: 8 }), { status: 200 });
+  };
+
+  try {
+    const result = await ocrPositionJd("QUJD", "image/png");
+    assert.deepEqual(result, { text: "岗位职责：开发", chars: 8 });
+    assert.equal(request.url, "http://127.0.0.1:8000/positions/ocr");
+    assert.equal(request.options.method, "POST");
+    assert.deepEqual(JSON.parse(request.options.body), {
+      image_base64: "QUJD",
+      mime_type: "image/png",
+    });
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -496,6 +519,10 @@ test("submitAnswerStream parses status, chunks, and the final session state", as
   const encoder = new TextEncoder();
   const frames = [
     'event: status\ndata: {"message":"正在评价回答"}\n\n',
+    'event: progress\ndata: {"message":"正在评价回答（已等待 5 秒）","elapsed":5}\n\n',
+    'event: eval_chunk\ndata: {"text":"先比对证据"}\n\n',
+    'event: eval_chunk\ndata: {"text":"，再给评分"}\n\n',
+    'event: usage\ndata: {"prompt_tokens":120,"completion_tokens":30,"total_tokens":150}\n\n',
     'event: chunk\ndata: {"text":"参考回答"}\n\n',
     'event: done\ndata: {"session_id":"session-1","state":{"question":"Next question"}}\n\n',
   ];
@@ -511,8 +538,33 @@ test("submitAnswerStream parses status, chunks, and the final session state", as
       events.push([event, payload]);
     });
     assert.equal(result.state.question, "Next question");
-    assert.deepEqual(events.map(([event]) => event), ["status", "chunk", "done"]);
-    assert.equal(events[1][1].text, "参考回答");
+    assert.deepEqual(events.map(([event]) => event), ["status", "progress", "eval_chunk", "eval_chunk", "usage", "chunk", "done"]);
+    assert.equal(events[2][1].text, "先比对证据");
+    assert.equal(events[4][1].total_tokens, 150);
+    assert.equal(events[5][1].text, "参考回答");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("submitAnswerStream forwards an abort signal to fetch", async () => {
+  const originalFetch = globalThis.fetch;
+  let receivedOptions = null;
+  globalThis.fetch = async (_url, options) => {
+    receivedOptions = options;
+    return new Response(new ReadableStream({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode('event: done\ndata: {"session_id":"session-1","state":{"question":"Next"}}\n\n'));
+        controller.close();
+      },
+    }), { status: 200, headers: { "Content-Type": "text/event-stream" } });
+  };
+  const controller = new AbortController();
+
+  try {
+    const result = await submitAnswerStream("My answer", { sessionId: "session-1" }, () => {}, controller.signal);
+    assert.equal(result.state.question, "Next");
+    assert.strictEqual(receivedOptions.signal, controller.signal);
   } finally {
     globalThis.fetch = originalFetch;
   }

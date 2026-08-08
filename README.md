@@ -8,7 +8,7 @@
 
 `InterviewGraph` 支持可选 `checkpointer` 和 `thread_id`，可用于检查点、状态历史和恢复实验。`InterviewService` 通过 `workflow_checkpointer` 参数暴露该能力，但默认不启用；默认会话事实源仍是现有 `SessionStore`。SQLite Checkpointer 需要额外安装 `langgraph-checkpoint-sqlite`，当前未纳入默认依赖。
 
-第一阶段不启用 LangGraph checkpoint：`SessionStore` 仍是会话状态的唯一事实源，因此保留现有 SQLite 持久化、版本校验和失败回滚行为。LLM 交互已通过 LangChain 接入：`ChatOpenAI` 负责与 OpenAI 兼容端点通信，问题生成与评价使用 `ChatPromptTemplate` 组装提示词、`JsonOutputParser` 解析结构化输出；提示词、模型调用和流式协议不再手写。向量数据库和多 Agent Runtime 当前未接入。
+第一阶段不启用 LangGraph checkpoint：`SessionStore` 仍是会话状态的唯一事实源，因此保留现有 SQLite 持久化、版本校验和失败回滚行为。LLM 交互已通过 LangChain 接入：`ChatOpenAI` 负责与 OpenAI 兼容端点通信，问题生成与评价使用 `ChatPromptTemplate` 组装提示词、`JsonOutputParser` 解析结构化输出；提示词、模型调用和流式协议不再手写。为技术面试、作品集评审和答辩三种模式，`LlmReviewPolicy` 让 LLM 在规则圈定的候选主题与方向集合内做决策，任何失败都回退到同模式的规则策略；问题生成与回答评价在产出最终结果前先输出 `analysis` 思考沉淀并随会话持久化。向量数据库和多 Agent Runtime 当前未接入。
 
 Interview Agent 当前是一个 **Project Intelligence Engine + Domain Review Agent** 的最小可运行实现：先理解用户提交的项目/作品，再把结构化事实交给领域复盘流程，生成问题、评价和追问。
 
@@ -78,6 +78,7 @@ Stitch 七张产品页面现已全部重构进主应用；当前覆盖状态、�
 - `GET /positions`、`POST /positions`：按面试者列出或创建目标岗位。创建请求包含岗位名称、JD 原文，以及可选的公司、来源链接和关联项目 ID；服务端保存 JD、提取任职要求并生成岗位题库。
 - `GET /positions/{position_id}`、`PATCH /positions/{position_id}`、`DELETE /positions/{position_id}`：读取、更新或删除一个目标岗位；岗位状态支持 `preparing`、`applied`、`interviewing` 和 `archived`。
 - `POST /positions/{position_id}/questions`：基于最新 JD 和关联项目重新生成岗位题库。只有同时匹配项目内容和具体证据的题目才标记为项目证据题，否则生成经历题。
+- `POST /positions/ocr`：body 为 `{ "image_base64": "...", "mime_type": "image/png" }`，用已配置的大模型视觉能力从 JD 截图中识别原文文本；未配置大模型或图片超过 10MB 时返回 400。
 - `GET /resumes`：按可选的 `candidate_id` 过滤并列出简历库摘要（姓名、岗位、领域、状态、主张数量、关联项目名）；不传 `candidate_id` 时返回简历库全部简历，供“新建复盘”选择面试者使用。
 - `POST /resumes`：body 为 `{ "name": "...", "role": "...", "domain": "...", "resume_text": "...", "project_ids": [...] }`，保存简历原文、提取面试者主张并返回详情；`name` 缺省时尝试从正文首行识别。
 - `GET /resumes/{resume_id}`：读取简历详情（含提取的主张列表）。
@@ -102,7 +103,9 @@ Stitch 七张产品页面现已全部重构进主应用；当前覆盖状态、�
 
 侧边栏的“岗位准备”是面试者级的独立页面，不依赖当前是否打开某个项目。用户可以同时保存多个目标岗位，并为每个岗位维护 JD 原文、结构化任职要求、关联项目、独立题库、申请状态和练习历史。一个岗位可关联多个已分析项目；从某道岗位题开始练习后，会话会同时记录岗位和题目 ID，便于回到岗位页查看历史。
 
-当前创建入口支持直接粘贴 JD，或导入不超过 1MB 的 `.txt`、`.md`、`.json` 文本文件。图片和 PDF 的 OCR 尚未实现；这类 JD 需要先复制为文本。题库生成目前是确定性的本地规则，不调用外部模型：能被项目证据支撑的要求生成项目证据题，其余要求生成经历题。
+当前创建入口支持直接粘贴 JD、导入不超过 1MB 的 `.txt`、`.md`、`.json` 文本文件，或粘贴/导入 JD 截图（不超过 10MB）：截图由已配置的大模型视觉能力识别为文本后填入 JD 输入框，未配置大模型时会提示先到应用设置启用。PDF 的 OCR 尚未实现，这类 JD 需要先复制为文本。题库生成优先使用已配置的大模型：注入岗位要求与项目证据生成题目，结构化校验失败或未配置大模型时回退为确定性的本地规则（能被项目证据支撑的要求生成项目证据题，其余要求生成经历题）。
+
+由岗位题发起的练习会话会记录岗位、题目和该题对应的岗位要求；之后的追问和评价都携带该岗位要求上下文，优先围绕"岗位要求 × 项目证据"的差距展开，本地规则回退时同样会生成"岗位要求提到……"的定向追问。
 
 ## 简历库
 

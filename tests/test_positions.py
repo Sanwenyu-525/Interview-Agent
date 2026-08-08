@@ -6,6 +6,7 @@ from pathlib import Path
 from urllib.request import Request, urlopen
 
 from interview_agent.http_api import create_server
+from interview_agent.llm import LLMError
 from interview_agent.positions import SQLitePositionStore
 from interview_agent.repository import InMemoryProjectRepository
 from interview_agent.service import InterviewService
@@ -28,6 +29,19 @@ PROJECTS = (
         "evidence": {"e-ui": {"source_path": "App.jsx", "excerpt": "react"}},
     },
 )
+
+
+class FakeLlmClient:
+    def __init__(self, response="", error=None):
+        self.response = response
+        self.error = error
+        self.requests = []
+
+    def chat(self, messages, response_format=None):
+        self.requests.append({"messages": messages, "response_format": response_format})
+        if self.error is not None:
+            raise self.error
+        return self.response
 
 
 def create_service(**kwargs):
@@ -166,6 +180,142 @@ class PositionTests(unittest.TestCase):
             server.shutdown()
             server.server_close()
             thread.join(timeout=2)
+
+    def test_llm_generates_position_questions_and_filters_invalid_items(self):
+        fake = FakeLlmClient(
+            json.dumps(
+                {
+                    "questions": [
+                        {
+                            "text": "岗位要求提到熟悉 Java 与 MySQL。请结合支付系统的真实实现说明数据库设计做法与权衡。",
+                            "requirement": "熟悉 Java 与 MySQL 数据库设计",
+                            "category": "project_evidence",
+                            "difficulty": 2,
+                            "project_id": 11,
+                            "evidence_ids": ["e-tx", "e-ui", "no-such-id"],
+                        },
+                        {
+                            "text": "请用一个真实项目说明 React 前端开发的实践。",
+                            "requirement": "能够完成 React 前端开发",
+                            "category": "experience",
+                            "difficulty": 1,
+                            "project_id": None,
+                            "evidence_ids": [],
+                        },
+                        {
+                            "text": "这是一条无效题目",
+                            "requirement": "不存在的需求",
+                            "category": "experience",
+                            "difficulty": 1,
+                            "project_id": None,
+                            "evidence_ids": [],
+                        },
+                    ]
+                },
+                ensure_ascii=False,
+            )
+        )
+        service = create_service(llm_client=fake)
+        position = service.create_position(
+            {
+                "candidate_id": "alice",
+                "title": "全栈工程师",
+                "jd_text": "任职要求\n熟悉 Java 与 MySQL 数据库设计\n能够完成 React 前端开发",
+                "project_ids": [11, 12],
+            }
+        )
+        self.assertEqual(len(position.questions), 2)
+        first = position.questions[0]
+        self.assertEqual(first.requirement, "熟悉 Java 与 MySQL 数据库设计")
+        self.assertEqual(first.category, "project_evidence")
+        self.assertEqual(first.project_id, 11)
+        self.assertEqual(first.evidence_ids, ("e-tx",))
+        second = position.questions[1]
+        self.assertEqual(second.category, "experience")
+        self.assertIsNone(second.project_id)
+
+    def test_llm_failure_falls_back_to_rules(self):
+        service = create_service(
+            llm_client=FakeLlmClient(
+                json.dumps(
+                    {"questions": [{"text": "", "requirement": "x", "category": "experience"}]},
+                    ensure_ascii=False,
+                )
+            )
+        )
+        position = service.create_position(
+            {
+                "candidate_id": "alice",
+                "title": "Java 工程师",
+                "jd_text": "熟悉 Java 与 MySQL 数据库设计",
+                "project_ids": [11],
+            }
+        )
+        self.assertEqual(len(position.questions), 1)
+        self.assertEqual(position.questions[0].category, "project_evidence")
+
+        failing = create_service(llm_client=FakeLlmClient(error=LLMError("上游失败")))
+        fallback = failing.create_position(
+            {
+                "candidate_id": "alice",
+                "title": "Java 工程师",
+                "jd_text": "熟悉 Java 与 MySQL 数据库设计",
+                "project_ids": [11],
+            }
+        )
+        self.assertEqual(len(fallback.questions), 1)
+        self.assertEqual(fallback.questions[0].category, "project_evidence")
+
+    def test_ocr_requires_configured_llm(self):
+        service = create_service()
+        with self.assertRaises(ValueError):
+            service.ocr_position_jd({"image_base64": "AAAA", "mime_type": "image/png"})
+
+    def test_ocr_extracts_jd_text_and_validates_input(self):
+        fake = FakeLlmClient("岗位职责：负责后端开发。任职要求：熟悉 Java。")
+        service = create_service(llm_client=fake)
+        result = service.ocr_position_jd({"image_base64": "QUJD", "mime_type": "image/png"})
+        self.assertEqual(result["text"], "岗位职责：负责后端开发。任职要求：熟悉 Java。")
+        self.assertGreater(result["chars"], 0)
+        self.assertTrue(any(
+            message["role"] == "user" and isinstance(message["content"], list)
+            for request in fake.requests
+            for message in request["messages"]
+        ))
+
+        with self.assertRaises(ValueError):
+            service.ocr_position_jd({"image_base64": "!!!not-base64!!!", "mime_type": "image/png"})
+        with self.assertRaises(ValueError):
+            service.ocr_position_jd({"image_base64": "QUJD", "mime_type": "text/plain"})
+
+    def test_position_follow_up_questions_target_the_requirement(self):
+        service = create_service()
+        position = service.create_position(
+            {
+                "candidate_id": "alice",
+                "title": "Java 工程师",
+                "jd_text": "熟悉事务与数据库设计",
+                "project_ids": [11],
+            }
+        )
+        question = position.questions[0]
+        session_id, state = service.start_session(
+            11,
+            candidate_id="alice",
+            position_id=position.position_id,
+            position_question_id=question.question_id,
+        )
+        self.assertEqual(state.position_requirement, question.requirement)
+        self.assertEqual(state.position_title, "Java 工程师")
+
+        updated = service.submit_answer(session_id, "我用 MySQL 的事务隔离级别与回滚机制保证一致性。")
+        self.assertIn("岗位要求提到", updated.question)
+        self.assertIn(question.requirement, updated.question)
+
+        summary = service.list_sessions(candidate_id="alice", position_id=position.position_id)
+        self.assertEqual(
+            summary["sessions"][0]["position_requirement"], question.requirement
+        )
 
 
 if __name__ == "__main__":

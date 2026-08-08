@@ -609,6 +609,140 @@ class HttpApiTests(unittest.TestCase):
             server.shutdown()
             server.server_close()
 
+    def test_http_api_streams_progress_events_during_slow_evaluation(self):
+        class SlowSubmitService(InterviewService):
+            def submit_answer(self, session_id, answer, **kwargs):
+                time.sleep(2.5)
+                return super().submit_answer(session_id, answer, **kwargs)
+
+        server = create_server(SlowSubmitService())
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            status, _ = request_json(
+                f"http://127.0.0.1:{server.server_port}/projects",
+                "POST",
+                PROJECT,
+            )
+            self.assertEqual(status, 201)
+            _, session = request_json(
+                f"http://127.0.0.1:{server.server_port}/sessions",
+                "POST",
+                {"project_id": 7},
+            )
+            request = Request(
+                f"http://127.0.0.1:{server.server_port}/sessions/{session['session_id']}/answers/stream",
+                data=json.dumps({"answer": "answer"}).encode("utf-8"),
+                method="POST",
+                headers={"Content-Type": "application/json"},
+            )
+            with urlopen(request) as response:
+                body = response.read().decode("utf-8")
+            self.assertIn("event: progress", body)
+            self.assertIn('"elapsed": 1', body)
+            self.assertIn("已等待 1 秒", body)
+            self.assertIn("event: done", body)
+        finally:
+            server.shutdown()
+            server.server_close()
+
+    def test_http_api_streams_evaluation_tokens_and_usage(self):
+        class EmittingEvaluatorService(InterviewService):
+            def submit_answer(self, session_id, answer, **kwargs):
+                from interview_agent.llm import get_stream_sink
+
+                sink = get_stream_sink()
+                if sink is not None:
+                    sink.token('{"analysis": "先比对证据')
+                    sink.token("，再给评分")
+                    sink.usage(
+                        {
+                            "prompt_tokens": 120,
+                            "completion_tokens": 30,
+                            "total_tokens": 150,
+                        }
+                    )
+                return super().submit_answer(session_id, answer, **kwargs)
+
+        server = create_server(EmittingEvaluatorService())
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            status, _ = request_json(
+                f"http://127.0.0.1:{server.server_port}/projects",
+                "POST",
+                PROJECT,
+            )
+            self.assertEqual(status, 201)
+            _, session = request_json(
+                f"http://127.0.0.1:{server.server_port}/sessions",
+                "POST",
+                {"project_id": 7},
+            )
+            request = Request(
+                f"http://127.0.0.1:{server.server_port}/sessions/{session['session_id']}/answers/stream",
+                data=json.dumps({"answer": "answer"}).encode("utf-8"),
+                method="POST",
+                headers={"Content-Type": "application/json"},
+            )
+            with urlopen(request) as response:
+                body = response.read().decode("utf-8")
+            self.assertIn("event: eval_chunk", body)
+            self.assertIn("先比对证据", body)
+            self.assertIn("再给评分", body)
+            self.assertIn("event: usage", body)
+            self.assertIn('"total_tokens": 150', body)
+            self.assertIn("event: done", body)
+        finally:
+            server.shutdown()
+            server.server_close()
+
+    def test_http_api_cancels_evaluation_when_client_disconnects(self):
+        class SlowCancelService(InterviewService):
+            def submit_answer(self, session_id, answer, **kwargs):
+                from interview_agent.llm import get_stream_sink
+
+                sink = get_stream_sink()
+                if sink is not None:
+                    sink.token("开始评价")
+                time.sleep(0.4)
+                sink = get_stream_sink()
+                if sink is not None and sink.cancelled:
+                    from interview_agent.llm import LLMError
+
+                    raise LLMError("回答生成已取消")
+                return super().submit_answer(session_id, answer, **kwargs)
+
+        server = create_server(SlowCancelService())
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            status, _ = request_json(
+                f"http://127.0.0.1:{server.server_port}/projects",
+                "POST",
+                PROJECT,
+            )
+            self.assertEqual(status, 201)
+            _, session = request_json(
+                f"http://127.0.0.1:{server.server_port}/sessions",
+                "POST",
+                {"project_id": 7},
+            )
+            request = Request(
+                f"http://127.0.0.1:{server.server_port}/sessions/{session['session_id']}/answers/stream",
+                data=json.dumps({"answer": "answer"}).encode("utf-8"),
+                method="POST",
+                headers={"Content-Type": "application/json"},
+            )
+            with urlopen(request, timeout=10) as response:
+                body = response.read(200).decode("utf-8", errors="replace")
+            self.assertIn("event: status", body)
+            # 客户端提前断开后，服务端不应继续推送 done
+            self.assertNotIn("event: done", body)
+        finally:
+            server.shutdown()
+            server.server_close()
+
     def test_http_api_returns_502_for_llm_failures(self):
         class LLMFailureService:
             def start_session(self, *args, **kwargs):
