@@ -1,0 +1,120 @@
+:where(.ui-button) {
+  min-height: var(--control-height);
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  font: inherit;
+  font-size: var(--text-sm);
+  font-weight: 600;
+  line-height: 1.4;
+  cursor: pointer;
+}
+
+:where(.ui-button:focus-visible, .ui-field:focus-within) {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+:where(.ui-button-primary) {
+  border-color: var(--primary);
+  color: var(--surface);
+  background: var(--primary);
+}
+
+:where(.ui-button-secondary) {
+  color: var(--text-primary);
+  background: var(--surface);
+}
+
+:where(.ui-button:disabled) {
+  color: var(--text-secondary);
+  background: var(--surface-soft);
+  cursor: not-allowed;
+}
+
+:where(.ui-field) {
+  min-height: var(--control-height);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-control);
+  color: var(--text-primary);
+  background: var(--surface);
+}
+
+:where(.ui-status) {
+  border-radius: var(--radius-control);
+  color: var(--text-secondary);
+  background: var(--surface-soft);
+}
+
+:where(.ui-status[data-tone="success"]) {
+  color: var(--success);
+  background: color-mix(in srgb, var(--success) 10%, var(--surface));
+}
+
+:where(.ui-status[data-tone="warning"]) {
+  color: var(--warning);
+  background: color-mix(in srgb, var(--warning) 10%, var(--surface));
+}
+
+:where(.ui-status[data-tone="error"]) {
+  color: var(--error);
+  background: color-mix(in srgb, var(--error) 10%, var(--surface));
+}
+
+:where(.ui-more-menu) {
+  position: relative;
+}
+
+:where(.ui-more-menu > summary) {
+  display: inline-flex;
+  min-width: 36px;
+  min-height: 36px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid transparent;
+  border-radius: var(--radius-control);
+  color: var(--text-secondary);
+  cursor: pointer;
+  list-style: none;
+}
+
+:where(.ui-more-menu > summary::-webkit-details-marker) { display: none; }
+:where(.ui-more-menu > summary:hover) { color: var(--text-primary); background: var(--surface-soft); }
+:where(.ui-more-menu > summary:focus-visible) { outline: none; box-shadow: var(--focus-ring); }
+
+:where(.ui-more-menu > div) {
+  position: absolute;
+  top: calc(100% + var(--space-1));
+  right: 0;
+  z-index: 20;
+  display: grid;
+  min-width: 132px;
+  gap: 2px;
+  padding: var(--space-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  background: var(--surface);
+  box-shadow: var(--shadow-soft);
+}
+
+:where(.ui-more-menu > div button) {
+  display: inline-flex;
+  min-height: 36px;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 0 var(--space-2);
+  border: 0;
+  border-radius: 6px;
+  color: var(--text-primary);
+  background: transparent;
+  font: inherit;
+  font-size: var(--text-xs);
+  text-align: left;
+  cursor: pointer;
+}
+
+:where(.ui-more-menu > div button:hover) { background: var(--surface-soft); }
+:where(.ui-more-menu > div button.is-danger) { color: var(--error); }
+:where(.ui-more-menu > div button:disabled) { color: var(--text-secondary); cursor: not-allowed; }

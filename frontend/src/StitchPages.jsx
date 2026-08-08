@@ -20,6 +20,7 @@ import {
   ImageSquare,
   ListBullets,
   MagnifyingGlass,
+  DotsThree,
   Plus,
   PencilSimple,
   Presentation,
@@ -41,6 +42,8 @@ import {
   createPosition,
   deleteResume,
   deletePosition,
+  getAgents,
+  getProjects,
   getPositions,
   getResumes,
   getResume,
@@ -133,7 +136,29 @@ function resumeStatusLabel(value) {
   return { extracted: "已提取", analyzing: "分析中", pending: "待提取" }[value] || value;
 }
 
-export function PrimarySidebar({ activeView, onNavigate, onNewSession, hasProject }) {
+function reviewTopicLabel(value) {
+  return {
+    basic: "基础澄清",
+    deep: "深入实现",
+    architecture: "架构权衡",
+    project_evidence: "项目证据",
+  }[value] || value || "项目理解";
+}
+
+function candidateLabel(value) {
+  return value && value !== "default" ? value : "默认面试者";
+}
+
+function trendLabel(value) {
+  return {
+    new: "新样本",
+    improving: "上升",
+    stable: "稳定",
+    declining: "下降",
+  }[value] || "趋势未定";
+}
+
+export function PrimarySidebar({ activeView, onNavigate, onNewSession, hasProject, isOpen = false, onClose = () => {} }) {
   const nav = [
     ["interview", "面试工作台", ListBullets],
     ["positions", "岗位准备", Briefcase],
@@ -144,7 +169,10 @@ export function PrimarySidebar({ activeView, onNavigate, onNewSession, hasProjec
     ["settings", "应用设置", GearSix],
   ];
   return (
-    <aside className="stitch-primary-sidebar" aria-label="应用导航">
+    <>
+      {isOpen && <button className="mobile-nav-backdrop" type="button" aria-label="关闭应用导航" onClick={onClose} />}
+      <aside id="app-navigation" className={`stitch-primary-sidebar ${isOpen ? "is-open" : ""}`} aria-label="应用导航">
+        <button className="mobile-sidebar-close" type="button" aria-label="关闭应用导航" onClick={onClose}><X size={18} /></button>
       <button className="stitch-new-session" type="button" onClick={onNewSession} disabled={!hasProject}>
         <Plus size={15} weight="bold" /> 新建复盘
       </button>
@@ -155,10 +183,8 @@ export function PrimarySidebar({ activeView, onNavigate, onNewSession, hasProjec
           </button>
         ))}
       </nav>
-      <div className="stitch-sidebar-footer">
-        <button type="button" onClick={() => onNavigate("settings")}><GearSix size={16} /> 应用设置</button>
-      </div>
-    </aside>
+      </aside>
+    </>
   );
 }
 
@@ -173,33 +199,172 @@ function positionError(cause) {
   return cause?.details?.error || cause?.message || String(cause);
 }
 
-function parseProjectIds(value) {
-  if (!value.trim()) return [];
-  const ids = value.split(/[，,\s]+/).filter(Boolean).map(Number);
-  if (ids.some((id) => !Number.isInteger(id) || id < 1)) {
-    throw new Error("关联项目 ID 必须是用逗号分隔的正整数");
+function questionPracticeState(question) {
+  const count = question.practice_count || 0;
+  if (count === 0) return { label: "未练", tone: "untouched" };
+  const score = question.average_score;
+  if (score === null) return { label: `练过 ${count} 次`, tone: "pending" };
+  const tone = score >= 80 ? "strong" : score >= 60 ? "medium" : "weak";
+  return { label: `${score} 分 · ${count} 次`, tone };
+}
+
+function QuestionPracticeBadge({ question }) {
+  const state = questionPracticeState(question);
+  return <span className={`position-question-state is-${state.tone}`}>{state.label}</span>;
+}
+
+function ProjectPicker({ projects, value, onChange }) {
+  const [query, setQuery] = useState("");
+  const [open, setOpen] = useState(false);
+  const normalized = query.trim().toLowerCase();
+  const available = projects
+    .filter((project) => !value.includes(project.project_id))
+    .filter((project) => !normalized
+      || project.project_name.toLowerCase().includes(normalized)
+      || String(project.project_id) === normalized)
+    .slice(0, 8);
+  function pick(project) {
+    onChange([...value, project.project_id]);
+    setQuery("");
+    setOpen(false);
   }
-  return [...new Set(ids)];
+  return (
+    <div className="position-project-picker" onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget)) setOpen(false); }}>
+      <div className="position-project-chips">
+        {value.length === 0 && <span className="position-project-chip is-empty">尚未关联项目</span>}
+        {value.map((id) => {
+          const project = projects.find((item) => item.project_id === id);
+          return (
+            <span className="position-project-chip" key={id}>
+              {project?.project_name || `项目 ${id}`}
+              <button type="button" aria-label={`移除 ${project?.project_name || id}`} onClick={() => onChange(value.filter((item) => item !== id))}><X size={11} weight="bold" /></button>
+            </span>
+          );
+        })}
+      </div>
+      <div className="position-project-pick-row">
+        <input value={query} onChange={(event) => { setQuery(event.target.value); setOpen(true); }} onFocus={() => setOpen(true)} placeholder="搜索并选择要关联的项目（可多选）" />
+        {open && available.length > 0 && (
+          <ul className="position-project-options">
+            {available.map((project) => (
+              <li key={project.project_id}>
+                <button type="button" onMouseDown={(event) => event.preventDefault()} onClick={() => pick(project)}>{project.project_name}<small>ID {project.project_id}</small></button>
+              </li>
+            ))}
+          </ul>
+        )}
+        {open && query.trim() && available.length === 0 && <small className="position-project-no-match">没有匹配的项目</small>}
+      </div>
+    </div>
+  );
+}
+
+function PositionFormDialog({ mode, initial, projects, busyAction, onClose, onSubmit, onOcr, onError }) {
+  const [draft, setDraft] = useState(initial);
+  const isEdit = mode === "edit";
+
+  function setField(key, value) {
+    setDraft((current) => ({ ...current, [key]: value }));
+  }
+
+  async function handleTextFile(event) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    if (file.size > 1024 * 1024) {
+      onError("JD 文本文件不能超过 1MB。");
+      return;
+    }
+    try {
+      const text = await file.text();
+      setDraft((current) => ({ ...current, jd_text: text, title: current.title || file.name.replace(/\.[^.]+$/, "") }));
+      onError("");
+    } catch (cause) {
+      onError(`无法读取 JD 文件：${positionError(cause)}`);
+    }
+  }
+
+  async function runOcr(file) {
+    if (!file.type.startsWith("image/")) {
+      onError("OCR 仅支持图片文件。");
+      return;
+    }
+    if (file.size > 10 * 1024 * 1024) {
+      onError("JD 图片不能超过 10MB。");
+      return;
+    }
+    const text = await onOcr(file);
+    if (text) {
+      setDraft((current) => ({ ...current, jd_text: text, title: current.title || file.name.replace(/\.[^.]+$/, "") }));
+    }
+  }
+
+  function handleImageFile(event) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    runOcr(file);
+  }
+
+  function handleJdPaste(event) {
+    const files = event.clipboardData?.files;
+    const image = files && files.length > 0 ? files[0] : null;
+    if (image && image.type.startsWith("image/")) {
+      event.preventDefault();
+      runOcr(image);
+    }
+  }
+
+  return (
+    <div className="position-create-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !busyAction) onClose(); }}>
+      <form className="position-create-dialog" onSubmit={(event) => { event.preventDefault(); onSubmit(draft); }} aria-label={isEdit ? "编辑目标岗位" : "添加目标岗位"}>
+        <div className="position-create-heading">
+          <div><span>{isEdit ? "EDIT POSITION" : "NEW POSITION"}</span><h2>{isEdit ? "编辑目标岗位" : "添加目标岗位"}</h2><p>粘贴 JD 或导入 UTF-8 文本文件。</p></div>
+          <button type="button" aria-label="关闭" onClick={onClose} disabled={Boolean(busyAction)}><X size={18} /></button>
+        </div>
+        <div className="position-form-grid">
+          <label><span>岗位名称 *</span><input value={draft.title} onChange={(event) => setField("title", event.target.value)} required maxLength={120} placeholder="例如：Java 后端工程师" /></label>
+          <label><span>公司</span><input value={draft.company} onChange={(event) => setField("company", event.target.value)} maxLength={120} placeholder="公司或团队名称" /></label>
+          <label><span>来源链接</span><input type="url" value={draft.source_url} onChange={(event) => setField("source_url", event.target.value)} maxLength={2000} placeholder="https://…" /></label>
+          <label className="position-picker-field"><span>关联项目</span><ProjectPicker projects={projects} value={draft.project_ids} onChange={(ids) => setField("project_ids", ids)} /></label>
+        </div>
+        <label className="position-jd-field"><span>JD 原文 *</span><textarea value={draft.jd_text} onChange={(event) => setField("jd_text", event.target.value)} onPaste={handleJdPaste} required maxLength={100000} placeholder="粘贴岗位职责、任职要求和加分项…，或直接粘贴 JD 截图" />
+          <label className="position-file-import"><UploadSimple size={15} /><span>导入 .txt / .md / .json</span><input type="file" accept=".txt,.md,.json,text/plain,text/markdown,application/json" onChange={handleTextFile} /></label>
+          <label className="position-file-import"><ImageSquare size={15} /><span>{busyAction === "ocr" ? "识别中…" : "导入 JD 截图"}</span><input type="file" accept="image/*" onChange={handleImageFile} disabled={busyAction === "ocr"} /></label>
+        </label>
+        <div className="position-create-footer">
+          <small>{isEdit ? "保存后按最新 JD 与关联项目重新生成题目；已有练习记录保留。" : "图片与 PDF OCR 需在应用设置中配置大模型（视觉模型）；保存后会自动提取要求并生成题目。"}</small>
+          <span><button type="submit" disabled={Boolean(busyAction)}>{busyAction === (isEdit ? "update" : "create") ? (isEdit ? "保存中…" : "正在生成…") : (isEdit ? "保存修改" : "保存并生成题目")}<ArrowRight size={15} /></button><button type="button" onClick={onClose} disabled={Boolean(busyAction)}>取消</button></span>
+        </div>
+      </form>
+    </div>
+  );
 }
 
 export function PositionPreparationView({ candidateId = "default", currentProjectId = "", onPractice }) {
   const [positions, setPositions] = useState([]);
+  const [projects, setProjects] = useState([]);
   const [selectedId, setSelectedId] = useState("");
   const [sessions, setSessions] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isCreating, setIsCreating] = useState(false);
+  const [isEditing, setIsEditing] = useState(false);
   const [busyAction, setBusyAction] = useState("");
   const [error, setError] = useState("");
   const [notice, showNotice] = useAutoDismiss();
   const [activeTab, setActiveTab] = useState("overview");
-  const [draft, setDraft] = useState({
-    title: "",
-    company: "",
-    source_url: "",
-    project_ids: currentProjectId ? String(currentProjectId) : "",
-    jd_text: "",
-  });
+  const [isPositionMoreOpen, setIsPositionMoreOpen] = useState(false);
   const selected = positions.find((position) => position.position_id === selectedId) || null;
+
+  useEffect(() => {
+    let cancelled = false;
+    getProjects()
+      .then((result) => {
+        if (!cancelled) setProjects(result?.projects || []);
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -240,60 +405,78 @@ export function PositionPreparationView({ candidateId = "default", currentProjec
   }, [candidateId, selectedId]);
 
   function patchSelected(next) {
-    setPositions((current) => current.map((item) => (
-      item.position_id === next.position_id ? next : item
-    )));
+    setPositions((current) => current.map((item) => {
+      if (item.position_id !== next.position_id) return item;
+      const previousByQuestion = new Map((item.questions || []).map((question) => [question.question_id, question]));
+      return {
+        ...next,
+        questions: (next.questions || []).map((question) => {
+          const previous = previousByQuestion.get(question.question_id);
+          if (!previous) return question;
+          return {
+            ...question,
+            practice_count: previous.practice_count,
+            average_score: previous.average_score,
+            last_practiced_at: previous.last_practiced_at,
+          };
+        }),
+      };
+    }));
   }
 
-  async function handleCreate(event) {
-    event.preventDefault();
-    setBusyAction("create");
+  function createInitial() {
+    return {
+      title: "",
+      company: "",
+      source_url: "",
+      project_ids: currentProjectId ? [Number(currentProjectId)] : [],
+      jd_text: "",
+    };
+  }
+
+  function editInitial(position) {
+    return {
+      title: position.title,
+      company: position.company,
+      source_url: position.source_url,
+      project_ids: [...position.project_ids],
+      jd_text: position.jd_text,
+    };
+  }
+
+  async function handlePositionSubmit(values) {
+    setBusyAction(isEditing ? "update" : "create");
     setError("");
     showNotice("");
     try {
-      const created = await createPosition({
-        candidate_id: candidateId,
-        title: draft.title,
-        company: draft.company,
-        source_url: draft.source_url,
-        project_ids: parseProjectIds(draft.project_ids),
-        jd_text: draft.jd_text,
-      });
-      setPositions((current) => [created, ...current]);
-      setSelectedId(created.position_id);
-      setIsCreating(false);
-      setDraft({ title: "", company: "", source_url: "", project_ids: currentProjectId ? String(currentProjectId) : "", jd_text: "" });
-      showNotice(`已生成 ${created.questions?.length || 0} 道岗位准备题。`);
+      const payload = {
+        title: values.title.trim(),
+        company: values.company.trim(),
+        source_url: values.source_url.trim(),
+        project_ids: values.project_ids,
+        jd_text: values.jd_text,
+      };
+      if (isEditing) {
+        const updated = await updatePosition(selected.position_id, payload);
+        patchSelected(updated);
+        setIsEditing(false);
+        showNotice("岗位信息已更新，题目已按最新 JD 与关联项目重新生成。");
+      } else {
+        const created = await createPosition({ candidate_id: candidateId, ...payload });
+        setPositions((current) => [created, ...current]);
+        setSelectedId(created.position_id);
+        setIsCreating(false);
+        showNotice(`已生成 ${created.questions?.length || 0} 道岗位准备题。`);
+      }
       setActiveTab("questions");
     } catch (cause) {
-      setError(`创建岗位失败：${positionError(cause)}`);
+      setError(`${isEditing ? "更新" : "创建"}岗位失败：${positionError(cause)}`);
     } finally {
       setBusyAction("");
     }
   }
 
-  async function handleTextFile(event) {
-    const file = event.target.files?.[0];
-    event.target.value = "";
-    if (!file) return;
-    if (file.size > 1024 * 1024) {
-      setError("JD 文本文件不能超过 1MB。");
-      return;
-    }
-    try {
-      const text = await file.text();
-      setDraft((current) => ({
-        ...current,
-        jd_text: text,
-        title: current.title || file.name.replace(/\.[^.]+$/, ""),
-      }));
-      showNotice(`已读取 ${file.name}，请确认岗位信息后保存。`);
-    } catch (cause) {
-      setError(`无法读取 JD 文件：${positionError(cause)}`);
-    }
-  }
-
-  async function readImageBase64(file) {
+  function readImageBase64(file) {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
       reader.onload = () => resolve(String(reader.result).split(",")[1] || "");
@@ -302,48 +485,20 @@ export function PositionPreparationView({ candidateId = "default", currentProjec
     });
   }
 
-  async function runOcr(file) {
-    if (busyAction === "ocr") return;
-    if (!file.type.startsWith("image/")) {
-      setError("OCR 仅支持图片文件。");
-      return;
-    }
-    if (file.size > 10 * 1024 * 1024) {
-      setError("JD 图片不能超过 10MB。");
-      return;
-    }
+  async function handleOcr(file) {
     setBusyAction("ocr");
     setError("");
     showNotice("正在识别图片中的 JD 文本…");
     try {
       const base64 = await readImageBase64(file);
       const result = await ocrPositionJd(base64, file.type);
-      setDraft((current) => ({
-        ...current,
-        jd_text: result.text,
-        title: current.title || file.name.replace(/\.[^.]+$/, ""),
-      }));
       showNotice("已从图片识别出 JD 文本，请确认后保存。");
+      return result.text;
     } catch (cause) {
       setError(`图片识别失败：${positionError(cause)}`);
+      return "";
     } finally {
       setBusyAction("");
-    }
-  }
-
-  function handleImageFile(event) {
-    const file = event.target.files?.[0];
-    event.target.value = "";
-    if (!file) return;
-    runOcr(file);
-  }
-
-  function handleJdPaste(event) {
-    const files = event.clipboardData?.files;
-    const image = files && files.length > 0 ? files[0] : null;
-    if (image && image.type.startsWith("image/")) {
-      event.preventDefault();
-      runOcr(image);
     }
   }
 
@@ -408,20 +563,42 @@ export function PositionPreparationView({ candidateId = "default", currentProjec
     }
   }
 
+  const practicedCount = selected
+    ? selected.questions.filter((question) => (question.practice_count || 0) > 0).length
+    : 0;
+  const masteredCount = selected
+    ? selected.requirements.filter((requirement) => selected.questions.some(
+      (question) => question.requirement === requirement
+        && (question.practice_count || 0) > 0
+        && (question.average_score ?? 0) >= 80,
+    )).length
+    : 0;
+  const sortedQuestions = selected
+    ? [...selected.questions].sort((a, b) => {
+      const aCount = a.practice_count || 0;
+      const bCount = b.practice_count || 0;
+      if (aCount === 0 && bCount > 0) return -1;
+      if (bCount === 0 && aCount > 0) return 1;
+      return (a.average_score ?? 101) - (b.average_score ?? 101);
+    })
+    : [];
+  const priorityQuestion = sortedQuestions[0] || null;
+
   return (
-    <section className="stitch-page position-page" aria-label="岗位准备">
-      <header className="stitch-page-header position-page-header">
-        <div><span>POSITION PREPARATION</span><h1>岗位准备</h1><p>集中管理多个目标岗位，让每道题都能追溯到 JD 要求和项目证据。</p></div>
-        <button className="position-create-button" type="button" onClick={() => setIsCreating(true)}><Plus size={16} weight="bold" /> 添加岗位</button>
-      </header>
-      {(error || notice) && <div className={`position-feedback ${error ? "is-error" : "is-success"}`} role={error ? "alert" : "status"}>{error ? <WarningCircle size={17} /> : <CheckCircle size={17} weight="fill" />}<span>{error || notice}</span></div>}
-      {isLoading ? <div className="position-page-state">正在加载岗位资料…</div> : (
-        <div className="position-layout">
+    <section className="stitch-page position-page page-canvas" aria-label="岗位准备">
+      <div className="page-card position-card">
+        <header className="stitch-page-header position-page-header">
+          <div><span>POSITION PREPARATION</span><h1>岗位准备</h1><p>集中管理多个目标岗位，让每道题都能追溯到 JD 要求和项目证据。</p></div>
+          <button className="position-create-button" type="button" onClick={() => setIsCreating(true)}><Plus size={16} weight="bold" /> 添加岗位</button>
+        </header>
+        {(error || notice) && <div className={`position-feedback ${error ? "is-error" : "is-success"}`} role={error ? "alert" : "status"}>{error ? <WarningCircle size={17} /> : <CheckCircle size={17} weight="fill" />}<span>{error || notice}</span></div>}
+        {isLoading ? <div className="position-page-state">正在加载岗位资料…</div> : (
+          <div className="position-layout">
           <aside className="position-list-panel">
             <div className="position-list-heading"><span>目标岗位</span><b>{positions.length}</b></div>
             {positions.length === 0 && <div className="position-empty-list"><Briefcase size={25} weight="duotone" /><strong>还没有目标岗位</strong><p>添加一份 JD，系统会提取要求并生成对应题目。</p></div>}
             {positions.map((position) => (
-              <button className={`position-list-item ${position.position_id === selectedId ? "is-active" : ""}`} type="button" onClick={() => { setSelectedId(position.position_id); setActiveTab("overview"); }} key={position.position_id}>
+              <button className={`position-list-item ${position.position_id === selectedId ? "is-active" : ""}`} type="button" onClick={() => { setSelectedId(position.position_id); setActiveTab("overview"); setIsPositionMoreOpen(false); }} key={position.position_id}>
                 <span className="position-list-title-row"><strong>{position.title}</strong><span className={`position-status-badge is-${position.status}`}>{POSITION_STATUS[position.status]}</span></span>
                 <small className="position-list-company">{position.company || "未填写公司"}</small>
                 <span className="position-list-questions"><Brain size={13} weight="duotone" />{position.questions?.length || 0} Questions</span>
@@ -435,20 +612,24 @@ export function PositionPreparationView({ candidateId = "default", currentProjec
                   <div><span className="position-kicker">{selected.company || "目标岗位"}</span><h2>{selected.title}</h2><p>{selected.project_ids.length} 个关联项目 · {selected.requirements.length} 项要求 · {selected.questions.length} 道题</p></div>
                   <div className="position-detail-actions">
                     <select aria-label="岗位状态" value={selected.status} onChange={(event) => handleStatusChange(event.target.value)} disabled={Boolean(busyAction)}>{Object.entries(POSITION_STATUS).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select>
-                    <button type="button" onClick={handleDelete} disabled={Boolean(busyAction)}><Trash size={15} /> 删除</button>
+                    <button type="button" onClick={() => setIsEditing(true)} disabled={Boolean(busyAction)}><PencilSimple size={15} /> 编辑</button>
+                    <details className="ui-more-menu position-more-menu" open={isPositionMoreOpen} onToggle={(event) => setIsPositionMoreOpen(event.currentTarget.open)}>
+                      <summary aria-label="岗位更多操作"><DotsThree size={17} /></summary>
+                      <div><button className="is-danger" type="button" onClick={handleDelete} disabled={Boolean(busyAction)}><Trash size={15} /> 删除岗位</button></div>
+                    </details>
                   </div>
                 </div>
                 <div className="position-tabs" role="tablist">
                   {[["overview", "岗位概览"], ["questions", `题库 ${selected.questions.length}`], ["history", `练习记录 ${sessions.length}`]].map(([id, label]) => <button className={activeTab === id ? "is-active" : ""} type="button" role="tab" aria-selected={activeTab === id} onClick={() => setActiveTab(id)} key={id}>{label}</button>)}
                 </div>
                 {activeTab === "overview" && <div className="position-overview">
-                  <section className="position-summary-grid"><div><strong>{selected.requirements.length}</strong><span>已提取要求</span></div><div><strong>{selected.questions.length}</strong><span>准备题目</span></div><div><strong>{selected.project_ids.length}</strong><span>关联项目</span></div><div><strong>{sessions.filter((item) => item.question_count > 0).length}</strong><span>已练会话</span></div></section>
-                  <section className="position-content-section"><div className="position-section-heading"><span><Target size={18} /> JD 要求</span><small>系统从原文中提取</small></div><ol className="position-requirement-list">{selected.requirements.map((requirement) => <li key={requirement}>{requirement}</li>)}</ol></section>
+                  <section className="position-summary-grid"><div><strong>{selected.requirements.length}</strong><span>已提取要求</span></div><div><strong>{selected.questions.length}</strong><span>准备题目</span></div><div><strong>{practicedCount}</strong><span>已练题目</span></div><div><strong>{masteredCount}</strong><span>熟练要求</span></div></section>
+                  <section className="position-content-section"><div className="position-section-heading"><span><Target size={18} /> JD 要求</span><small>系统从原文中提取</small></div><ol className="position-requirement-list">{selected.requirements.map((requirement) => { const related = selected.questions.filter((question) => question.requirement === requirement); const practiced = related.filter((question) => (question.practice_count || 0) > 0).length; return <li key={requirement}><span>{requirement}</span><small>{related.length} 题 · 已练 {practiced} 题</small></li>; })}</ol></section>
                   <details className="position-jd-source"><summary>查看 JD 原文</summary><pre>{selected.jd_text}</pre>{selected.source_url && <a href={selected.source_url} target="_blank" rel="noreferrer">打开来源链接 <ArrowRight size={13} /></a>}</details>
                 </div>}
                 {activeTab === "questions" && <div className="position-question-view">
-                  <div className="position-section-heading"><span><ListBullets size={18} /> 岗位题库</span><button type="button" onClick={handleRegenerate} disabled={Boolean(busyAction)}><ArrowClockwise size={15} /> {busyAction === "regenerate" ? "生成中…" : "重新生成"}</button></div>
-                  <div className="position-question-list">{selected.questions.map((question, index) => <article className="position-question-card" key={question.question_id}><div className="position-question-index">{String(index + 1).padStart(2, "0")}</div><div><span className="position-question-meta">{question.category === "project_evidence" ? `项目 ${question.project_id} · 项目证据题` : "经历题"}</span><h3>{question.text}</h3><p>对应要求：{question.requirement}</p>{question.evidence_ids.length > 0 && <small>证据：{question.evidence_ids.join("、")}</small>}</div><button type="button" onClick={() => handlePractice(question)} disabled={Boolean(busyAction) || !question.project_id}>{busyAction === question.question_id ? "启动中…" : "开始练习"}<Play size={14} weight="fill" /></button></article>)}</div>
+                  <div className="position-section-heading"><span><ListBullets size={18} /> 岗位题库</span><div className="position-question-tools">{priorityQuestion && <button type="button" className="position-priority-practice" onClick={() => handlePractice(priorityQuestion)} disabled={Boolean(busyAction)}><Play size={14} weight="fill" /> 优先练习</button>}<button type="button" onClick={handleRegenerate} disabled={Boolean(busyAction)}><ArrowClockwise size={15} /> {busyAction === "regenerate" ? "生成中…" : "重新生成"}</button></div></div>
+                  <div className="position-question-list">{sortedQuestions.map((question, index) => <article className="position-question-card" key={question.question_id}><div className="position-question-index">{String(index + 1).padStart(2, "0")}</div><QuestionPracticeBadge question={question} /><div><span className="position-question-meta">{question.category === "project_evidence" ? `${projects.find((project) => project.project_id === question.project_id)?.project_name || `项目 ${question.project_id}`} · 项目证据题` : "经历题"}</span><h3>{question.text}</h3><p>对应要求：{question.requirement}</p>{question.evidence_ids.length > 0 && <small>证据：{question.evidence_ids.join("、")}</small>}</div><button type="button" onClick={() => handlePractice(question)} disabled={Boolean(busyAction) || !question.project_id}>{busyAction === question.question_id ? "启动中…" : "开始练习"}<Play size={14} weight="fill" /></button></article>)}</div>
                 </div>}
                 {activeTab === "history" && <div className="position-history-view">
                   <div className="position-section-heading"><span><ClockCounterClockwise size={18} /> 练习记录</span><small>由岗位题目发起的会话</small></div>
@@ -458,8 +639,10 @@ export function PositionPreparationView({ candidateId = "default", currentProjec
             ) : <div className="position-page-state">选择一个岗位查看准备内容，或添加新的岗位。</div>}
           </main>
         </div>
-      )}
-      {isCreating && <div className="position-create-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !busyAction) setIsCreating(false); }}><form className="position-create-dialog" onSubmit={handleCreate} aria-label="添加目标岗位"><div className="position-create-heading"><div><span>NEW POSITION</span><h2>添加目标岗位</h2><p>粘贴 JD 或导入 UTF-8 文本文件。</p></div><button type="button" aria-label="关闭" onClick={() => setIsCreating(false)} disabled={Boolean(busyAction)}><X size={18} /></button></div><div className="position-form-grid"><label><span>岗位名称 *</span><input value={draft.title} onChange={(event) => setDraft((current) => ({ ...current, title: event.target.value }))} required maxLength={120} placeholder="例如：Java 后端工程师" /></label><label><span>公司</span><input value={draft.company} onChange={(event) => setDraft((current) => ({ ...current, company: event.target.value }))} maxLength={120} placeholder="公司或团队名称" /></label><label><span>来源链接</span><input type="url" value={draft.source_url} onChange={(event) => setDraft((current) => ({ ...current, source_url: event.target.value }))} maxLength={2000} placeholder="https://…" /></label><label><span>关联项目 ID</span><input value={draft.project_ids} onChange={(event) => setDraft((current) => ({ ...current, project_ids: event.target.value }))} placeholder="多个 ID 用逗号分隔" /></label></div><label className="position-jd-field"><span>JD 原文 *</span><textarea value={draft.jd_text} onChange={(event) => setDraft((current) => ({ ...current, jd_text: event.target.value }))} onPaste={handleJdPaste} required maxLength={100000} placeholder="粘贴岗位职责、任职要求和加分项…，或直接粘贴 JD 截图" /><label className="position-file-import"><UploadSimple size={15} /><span>导入 .txt / .md / .json</span><input type="file" accept=".txt,.md,.json,text/plain,text/markdown,application/json" onChange={handleTextFile} /></label><label className="position-file-import"><ImageSquare size={15} /><span>{busyAction === "ocr" ? "识别中…" : "导入 JD 截图"}</span><input type="file" accept="image/*" onChange={handleImageFile} disabled={busyAction === "ocr"} /></label></label><div className="position-create-footer"><small>图片和 PDF OCR 需在应用设置中配置大模型（视觉模型）；保存后会自动提取要求并生成题目。</small><span><button type="button" onClick={() => setIsCreating(false)} disabled={Boolean(busyAction)}>取消</button><button type="submit" disabled={Boolean(busyAction)}>{busyAction === "create" ? "正在生成…" : "保存并生成题目"}<ArrowRight size={15} /></button></span></div></form></div>}
+        )}
+      </div>
+      {isCreating && <PositionFormDialog mode="create" initial={createInitial()} projects={projects} busyAction={busyAction} onClose={() => setIsCreating(false)} onSubmit={handlePositionSubmit} onOcr={handleOcr} onError={setError} />}
+      {isEditing && selected && <PositionFormDialog mode="edit" initial={editInitial(selected)} projects={projects} busyAction={busyAction} onClose={() => setIsEditing(false)} onSubmit={handlePositionSubmit} onOcr={handleOcr} onError={setError} />}
     </section>
   );
 }
@@ -887,6 +1070,10 @@ export function SessionSetupView({ session, candidateId, isCreating, error, onCr
   const isMounted = useRef(true);
   const [mode, setMode] = useState(session.reviewMode || "technical_interview");
   const [candidate, setCandidate] = useState(candidateId || "default");
+  const [agentMode, setAgentMode] = useState("single");
+  const [agentSelections, setAgentSelections] = useState({ all: "builtin-generalist" });
+  const [agents, setAgents] = useState([]);
+  const [agentsOffline, setAgentsOffline] = useState(false);
   const [isResumePickerOpen, setIsResumePickerOpen] = useState(false);
   const [isUploadDialogOpen, setIsUploadDialogOpen] = useState(false);
   const [pickerQuery, setPickerQuery] = useState("");
@@ -908,8 +1095,21 @@ export function SessionSetupView({ session, candidateId, isCreating, error, onCr
 
   useEffect(() => {
     loadResumes();
+    loadAgents();
     return () => { isMounted.current = false; };
   }, []);
+
+  async function loadAgents() {
+    try {
+      const result = await getAgents();
+      if (isMounted.current) {
+        setAgents(result?.agents || []);
+        setAgentsOffline(false);
+      }
+    } catch {
+      if (isMounted.current) setAgentsOffline(true);
+    }
+  }
 
   useEffect(() => {
     if (!isResumePickerOpen) return undefined;
@@ -999,10 +1199,48 @@ export function SessionSetupView({ session, candidateId, isCreating, error, onCr
             <Target size={21} weight="duotone" />
             <div><strong>{reviewModeLabel(mode)}</strong><p>{REVIEW_MODES.find((item) => item.id === mode)?.description}</p></div>
           </section>
+          <section className="session-agent-section">
+            <div className="session-field-heading"><span>Agent 组合</span><small>{agentsOffline ? "Agent 列表不可用" : `${agents.length} 个可用角色`}</small></div>
+            <div className="agent-mode-switch" role="group" aria-label="Agent 模式">
+              <button className={agentMode === "single" ? "is-active" : ""} type="button" onClick={() => { setAgentMode("single"); setAgentSelections({ all: agents[0]?.id || "builtin-generalist" }); }}>
+                <strong>单 Agent</strong><small>一个 agent 负责出题、评价与追问</small>
+              </button>
+              <button className={agentMode === "multi" ? "is-active" : ""} type="button" onClick={() => { setAgentMode("multi"); setAgentSelections({ questioner: "builtin-questioner", evaluator: "builtin-evaluator", director: "builtin-director" }); }}>
+                <strong>多 Agent 分工</strong><small>三个阶段分别指定不同角色</small>
+              </button>
+            </div>
+            {agentMode === "single" ? (
+              <label className="session-agent-pick">
+                <span>面试 Agent</span>
+                <select value={agentSelections.all || ""} onChange={(event) => setAgentSelections({ all: event.target.value })} aria-label="选择面试 Agent">
+                  {(agents.length > 0 ? agents : []).map((agent) => (
+                    <option value={agent.id} key={agent.id}>{agent.name}{agent.builtin ? "（内置）" : ""}</option>
+                  ))}
+                </select>
+              </label>
+            ) : (
+              <div className="session-agent-roles">
+                {[
+                  { key: "questioner", label: "出题 Agent" },
+                  { key: "evaluator", label: "评价 Agent" },
+                  { key: "director", label: "追问策略 Agent" },
+                ].map(({ key, label }) => (
+                  <label className="session-agent-pick" key={key}>
+                    <span>{label}</span>
+                    <select value={agentSelections[key] || ""} onChange={(event) => setAgentSelections((current) => ({ ...current, [key]: event.target.value }))} aria-label={label}>
+                      {(agents.length > 0 ? agents : []).map((agent) => (
+                        <option value={agent.id} key={agent.id}>{agent.name}{agent.builtin ? "（内置）" : ""}</option>
+                      ))}
+                    </select>
+                  </label>
+                ))}
+              </div>
+            )}
+          </section>
           {error && <div className="inline-error" role="alert"><WarningCircle size={17} /> {error}</div>}
           <div className="session-create-actions">
             <span>创建后会生成首个项目证据问题</span>
-            <button type="button" onClick={() => onCreate({ candidateId: candidate.trim() || "default", reviewMode: mode })} disabled={isCreating}>
+            <button type="button" onClick={() => onCreate({ candidateId: candidate.trim() || "default", reviewMode: mode, agentMode, agentIds: agentSelections })} disabled={isCreating}>
               {isCreating ? "正在创建…" : "开始复盘会话"}<ArrowRight size={16} />
             </button>
           </div>
@@ -1221,7 +1459,8 @@ export function ResumeLibraryView() {
   }
 
   return (
-    <section className="stitch-page resume-library-page two-column" style={{ gridTemplateColumns: `${railWidth}px minmax(0, 1fr)` }} aria-label="简历库">
+    <section className="stitch-page resume-library-page page-canvas" aria-label="简历库">
+      <div className="page-card resume-library-card" style={{ gridTemplateColumns: `${railWidth}px minmax(0, 1fr)` }}>
       <aside className="resume-library-rail" aria-label="简历列表">
         <div className="resume-library-rail-head">
           <span>CANDIDATE CONTEXT</span>
@@ -1263,14 +1502,17 @@ export function ResumeLibraryView() {
                     </small>
                   </span>
                 </button>
-                <span className="resume-list-actions">
-                  {!query && <>
-                    <button className="resume-move-button" type="button" aria-label={`上移 ${resume.name}`} title="键盘排序：上移 (Alt+↑)" onClick={() => moveItem(index, -1)} disabled={index === 0}><CaretUp size={13} /></button>
-                    <button className="resume-move-button" type="button" aria-label={`下移 ${resume.name}`} title="键盘排序：下移 (Alt+↓)" onClick={() => moveItem(index, 1)} disabled={index === resumes.length - 1}><CaretDown size={13} /></button>
-                  </>}
-                  <button type="button" aria-label={`编辑 ${resume.name}`} title="编辑简历" onClick={() => setEditingResume(resume)}><PencilSimple size={13} /></button>
-                  <button type="button" aria-label={`删除 ${resume.name}`} title="删除简历" onClick={() => handleDeleteItem(resume)}><Trash size={13} /></button>
-                </span>
+                <details className="ui-more-menu resume-row-menu">
+                  <summary aria-label={`简历更多操作：${resume.name}`}><DotsThree size={17} /></summary>
+                  <div>
+                    {!query && <>
+                      <button className="resume-move-button" type="button" aria-label={`上移 ${resume.name}`} title="键盘排序：上移 (Alt+↑)" onClick={() => moveItem(index, -1)} disabled={index === 0}><CaretUp size={13} /> 上移</button>
+                      <button className="resume-move-button" type="button" aria-label={`下移 ${resume.name}`} title="键盘排序：下移 (Alt+↓)" onClick={() => moveItem(index, 1)} disabled={index === resumes.length - 1}><CaretDown size={13} /> 下移</button>
+                    </>}
+                    <button type="button" aria-label={`编辑 ${resume.name}`} title="编辑简历" onClick={() => setEditingResume(resume)}><PencilSimple size={13} /> 编辑</button>
+                    <button className="is-danger" type="button" aria-label={`删除 ${resume.name}`} title="删除简历" onClick={() => handleDeleteItem(resume)}><Trash size={13} /> 删除</button>
+                  </div>
+                </details>
               </div>
             ))
           )}
@@ -1300,6 +1542,7 @@ export function ResumeLibraryView() {
           <div className="resume-detail-empty-state"><FileText size={26} weight="duotone" /><strong>选择一份简历查看详情</strong><p>从左侧选择简历，查看提取的主张、标签与原文。</p></div>
         )}
       </main>
+      </div>
       <ResumeUploadDialog
         open={isUploadOpen}
         onClose={() => setIsUploadOpen(false)}
@@ -1427,9 +1670,15 @@ export function ResumeDetailView({ resumeId, onDeleted, embedded = false }) {
             {!embedded && <button className="resume-detail-back" type="button" onClick={() => onDeleted?.()}><ArrowRight size={16} className="back-icon" /> 简历库</button>}
             <div className="resume-detail-title">
               <span className="resume-avatar is-large">{resume.name[0]}</span>
-              <div><h1>{resume.name}</h1><p>{resume.role}{resume.domain ? ` · ${resume.domain}` : ""} · ID: {resume.resume_id} · {resumeStatusLabel(resume.status)}</p></div>
+              <div><h1>{resume.name}</h1><p>{resume.role}{resume.domain ? ` · ${resume.domain}` : ""} · {resumeStatusLabel(resume.status)}</p></div>
             </div>
-            <button className="resume-library-delete is-text" type="button" onClick={handleDelete}><Trash size={15} /> 删除简历</button>
+            <details className="ui-more-menu resume-detail-more-menu">
+              <summary aria-label="简历更多操作"><DotsThree size={18} /></summary>
+              <div>
+                <button className="is-danger" type="button" onClick={handleDelete}><Trash size={15} /> 删除简历</button>
+                <span className="resume-technical-id">简历 ID：{resume.resume_id}</span>
+              </div>
+            </details>
           </header>
           {(error || savedNotice) && <div className={`position-feedback ${error ? "is-error" : "is-success"}`} role={error ? "alert" : "status"}>{error ? <WarningCircle size={17} /> : <CheckCircle size={17} weight="fill" />}<span>{error || savedNotice}</span></div>}
           <div className="resume-detail-layout">
@@ -1445,7 +1694,7 @@ export function ResumeDetailView({ resumeId, onDeleted, embedded = false }) {
             </main>
             <aside className="resume-detail-aside">
               <section className="resume-detail-claims">
-                <div className="resume-detail-heading"><strong>面试者主张</strong><span>{resume.claims.length} 条 · 关闭“暂不用以提问”后该主张不再进入复盘</span></div>
+                <div className="resume-detail-heading"><strong>面试者主张</strong><span>{resume.claims.length} 条 · 默认用于提问，关闭后该主张不再进入复盘</span></div>
                 {resume.claims.length === 0 && <div className="resume-detail-empty">未从该简历中识别出可追问的主张。</div>}
                 {resume.claims.map((claim, index) => (
                   <article className="resume-detail-claim" key={claim.claim_id}>
@@ -1453,7 +1702,7 @@ export function ResumeDetailView({ resumeId, onDeleted, embedded = false }) {
                     <div><p>{claim.text}</p><small>{claim.source}</small></div>
                     <label className="resume-skip-toggle">
                       <input type="checkbox" checked={Boolean(claim.skip)} disabled={savingId === claim.claim_id} onChange={(event) => toggleClaimSkip(claim, event.target.checked)} />
-                      <span>{savingId === claim.claim_id ? "保存中…" : "暂不用以提问"}</span>
+                      <span>{savingId === claim.claim_id ? "保存中…" : "用于提问"}</span>
                     </label>
                   </article>
                 ))}
@@ -1488,20 +1737,24 @@ export function SessionReportView({ report, loading, error, onRetry, onPractice,
   if (error) return <PageState title="无法读取会话复盘" detail={error} action="重新读取" onAction={onRetry} />;
   if (!report) return <PageState title="暂无会话复盘" detail="完成至少一次回答后，这里会出现基于后端评价的复盘报告。" action="返回练习" onAction={onPractice} />;
   const score = report.average_score;
+  const sampleCount = report.question_count || report.records.length;
+  const isPreliminary = sampleCount < 3;
+  const confidenceLabel = isPreliminary ? "初步判断" : sampleCount < 5 ? "样本有限" : "样本较充分";
   return (
-    <section className="stitch-page report-page" aria-label="会话复盘报告">
-      <header className="report-header">
-        <div><span>会话复盘报告</span><h1>{report.project_name}</h1><p>{reviewModeLabel(report.review_mode)} · {report.candidate_id} · {report.question_count} 次回答</p></div>
-        <div className="report-header-stats"><div><strong>{report.question_count}</strong><small>QUESTIONS</small></div><div><strong>{report.evidence_ids.length}</strong><small>EVIDENCE</small></div></div>
-      </header>
-      <div className="report-layout">
+    <section className="stitch-page report-page page-canvas" aria-label="会话复盘报告">
+      <div className="page-card report-card">
+        <header className="report-header">
+          <div><span>会话复盘报告</span><h1>{report.project_name}</h1><p>{reviewModeLabel(report.review_mode)} · {candidateLabel(report.candidate_id)} · {sampleCount} 次回答</p></div>
+          <div className="report-header-stats"><div><strong>{sampleCount}</strong><small>回答样本</small></div><div><strong>{report.evidence_ids.length}</strong><small>关联证据</small></div></div>
+        </header>
+        <div className="report-layout">
         <main>
           <section className="report-score-card">
-            <div className="report-score-title"><span>综合评估</span><strong>{score ?? "—"}<small>/100</small></strong></div>
+            <div className="report-score-title"><span>{isPreliminary ? "初步判断" : "综合评估"}<small className="report-confidence-label">样本可信度：{confidenceLabel}</small></span><strong>{score ?? "—"}<small>/100</small></strong></div>
             <div className="report-score-line"><span style={{ width: `${score || 0}%` }} /></div>
             <div className="report-feedback-grid">
               <div className="is-strength"><strong>优势</strong>{report.strengths.length ? report.strengths.map((item) => <p key={item}><CheckCircle size={14} />{item}</p>) : <p>继续积累高质量回答样本。</p>}</div>
-              <div className="is-weakness"><strong>待提升</strong>{report.weaknesses.length ? report.weaknesses.map((item) => <p key={item}><WarningCircle size={14} />{item}</p>) : <p>当前没有明确弱项。</p>}</div>
+              <div className="is-weakness"><strong>待提升</strong>{report.weaknesses.length ? report.weaknesses.map((item) => <p key={item}><WarningCircle size={14} />{item}</p>) : <p>{isPreliminary ? "样本不足，暂不下结论。" : "当前没有明确弱项。"}</p>}</div>
             </div>
           </section>
           <section className="report-records">
@@ -1509,19 +1762,20 @@ export function SessionReportView({ report, loading, error, onRetry, onPractice,
             {report.records.map((record, index) => (
               <article ref={focusedRecordIndex === index ? focusedRecordRef : undefined} className={expanded === index ? "is-expanded" : ""} key={`${record.question}-${index}`}>
                 <button type="button" onClick={() => setExpanded(expanded === index ? -1 : index)}>
-                  <span>{String(index + 1).padStart(2, "0")}</span><strong>{record.topic}</strong><b>{record.evaluation.score}</b><ArrowRight size={14} />
+                  <span>{String(index + 1).padStart(2, "0")}</span><strong>{reviewTopicLabel(record.topic)}</strong><b>{record.evaluation.score}</b><ArrowRight size={14} />
                 </button>
-                {expanded === index && <div><h3>{record.question}</h3><blockquote>{record.answer}</blockquote><p>{record.evaluation.feedback}</p><div>{record.evaluation.evidence_ids.map((id) => <code key={id}>{id}</code>)}</div></div>}
+                {expanded === index && <div><h3>{record.question}</h3><blockquote>{record.answer}</blockquote><p>{record.evaluation.feedback}</p><details className="report-technical-details"><summary>{record.evaluation.evidence_ids.length} 条关联证据</summary><div>{record.evaluation.evidence_ids.map((id) => <code key={id}>{id}</code>)}</div></details></div>}
               </article>
             ))}
           </section>
         </main>
         <aside className="report-aside">
           <section><small>证据覆盖</small><strong>{report.evidence_ids.length}</strong><div className="report-aside-bar"><span style={{ width: `${Math.min(100, report.evidence_ids.length * 16)}%` }} /></div></section>
-          <section><small>主题分布</small>{report.topics.map((topic) => <div className="report-topic" key={topic.name}><span>{topic.name}</span><strong>{topic.average_score}</strong></div>)}</section>
+           <section><small>主题分布</small>{report.topics.map((topic) => <div className="report-topic" key={topic.name}><span>{reviewTopicLabel(topic.name)}<small>{topic.count} 个样本</small></span><strong>{topic.average_score}</strong></div>)}</section>
           <section><small>下一轮练习</small><p>{report.next_direction ? `建议继续进行“${report.next_direction}”方向的项目追问。` : "继续完成当前项目的证据驱动练习。"}</p></section>
           <button type="button" onClick={onPractice}>开始针对性练习<ArrowRight size={16} /></button>
         </aside>
+        </div>
       </div>
     </section>
   );
@@ -1532,28 +1786,30 @@ export function CandidateProfileView({ profile, loading, error, onRetry, onPract
   if (error) return <PageState title="无法读取能力画像" detail={error} action="重新读取" onAction={onRetry} />;
   const skills = Object.entries(profile?.skills || {});
   if (skills.length === 0) return <PageState title="能力画像还没有样本" detail="完成一次回答后，后端会按主题保存分数、趋势、样本数和薄弱项。" action="开始练习" onAction={onPractice} />;
+  const totalSamples = skills.reduce((sum, [, item]) => sum + item.sample_count, 0);
   const weaknesses = skills.flatMap(([topic, item]) => {
     const sources = new Map((item.weakness_sources || []).map((source) => [source.weakness, source]));
     return item.weaknesses.map((text) => ({ topic, text, source: sources.get(text) }));
   });
   return (
-    <section className="stitch-page profile-page" aria-label="面试者能力画像">
-      <header className="profile-header">
-        <div className="candidate-avatar is-large"><User size={26} /></div>
-        <div><h1>{profile.candidate_id}</h1><p>跨会话能力画像 · profile v{profile.version}</p></div>
-        <div className="profile-summary"><div><strong>{skills.length}</strong><small>能力主题</small></div><div><strong>{skills.reduce((sum, [, item]) => sum + item.sample_count, 0)}</strong><small>样本</small></div></div>
-        <button type="button" onClick={onPractice}>创建针对性会话</button>
-      </header>
-      <div className="profile-layout">
+    <section className="stitch-page profile-page page-canvas" aria-label="面试者能力画像">
+      <div className="page-card profile-card">
+        <header className="profile-header">
+          <div className="candidate-avatar is-large"><User size={26} /></div>
+          <div><h1>{candidateLabel(profile.candidate_id)}</h1><p>跨会话能力画像 · {totalSamples} 个回答样本</p></div>
+          <div className="profile-summary"><div><strong>{skills.length}</strong><small>能力主题</small></div><div><strong>{totalSamples}</strong><small>样本</small></div></div>
+          <button type="button" onClick={onPractice}>创建针对性会话</button>
+        </header>
+        <div className="profile-layout">
         <main>
           <section className="profile-quote"><Sparkle size={18} weight="duotone" /><p>画像只使用后端已保存的项目回答评价；样本少的主题会保留样本数，不制造虚假的精确趋势。</p></section>
           <section className="skill-matrix">
-            <div className="report-section-heading"><strong>能力矩阵</strong><span>Based on real evidence</span></div>
+            <div className="report-section-heading"><strong>能力矩阵</strong><span>基于真实评价</span></div>
             <div className="skill-grid">
               {skills.map(([name, skill]) => (
                 <article key={name}>
                   <div><strong>{name}</strong><b>{skill.score}</b></div>
-                  <small>{skill.trend} · {skill.sample_count} 个样本</small>
+                  <small>{trendLabel(skill.trend)} · {skill.sample_count} 个样本</small>
                   <div className="skill-bar"><span style={{ width: `${skill.score}%` }} /></div>
                   {skill.weaknesses[0] && <p>{skill.weaknesses[0]}</p>}
                 </article>
@@ -1563,10 +1819,11 @@ export function CandidateProfileView({ profile, loading, error, onRetry, onPract
           <section className="profile-history-note"><ClockCounterClockwise size={18} /><div><strong>画像持续更新</strong><p>每次提交回答后，面试者的主题分数、最近表现、趋势和薄弱项都会由后端事务更新。</p></div></section>
         </main>
         <aside className="profile-aside">
-          <section><div className="report-section-heading"><strong>能力趋势</strong><TrendUp size={16} /></div><div className="profile-bars">{skills.slice(0, 7).map(([name, skill]) => <span title={`${name} ${skill.score}`} style={{ height: `${Math.max(22, skill.score)}%` }} key={name} />)}</div></section>
-          <section><div className="report-section-heading"><strong>重点薄弱点</strong><span>{weaknesses.length}</span></div>{weaknesses.length ? weaknesses.slice(0, 4).map((item) => <article key={`${item.topic}-${item.text}`}><strong>{item.topic}</strong><p>{item.text}</p>{item.source ? <button className="profile-source-link" type="button" title={`会话 ${item.source.session_id}`} onClick={() => onOpenSource?.(item.source)}><ClockCounterClockwise size={13} />第 {item.source.record_index + 1} 题 · {item.source.evidence_ids.length} 条证据<ArrowRight size={12} /></button> : <small className="profile-source-empty">历史画像暂无可追溯来源</small>}</article>) : <p className="profile-empty-copy">暂无明确薄弱项。</p>}</section>
+          <section><div className="report-section-heading"><strong>能力趋势</strong><TrendUp size={16} /></div><div className="profile-bars">{skills.slice(0, 7).map(([name, skill]) => skill.score > 0 ? <span title={`${name} ${skill.score}`} style={{ height: `${skill.score}%` }} key={name} /> : <span className="profile-bar-empty" title={`${name}：尚未形成有效趋势`} key={name}>—</span>)}</div><p className="profile-trend-note">零分维度不绘制趋势柱，避免制造虚假精度。</p></section>
+          <section><div className="report-section-heading"><strong>重点薄弱点</strong><span>优先 {Math.min(3, weaknesses.length)} / {weaknesses.length}</span></div>{weaknesses.length ? weaknesses.slice(0, 3).map((item) => <article key={`${item.topic}-${item.text}`}><strong>{item.topic}</strong><p>{item.text}</p>{item.source ? <button className="profile-source-link" type="button" title={`会话 ${item.source.session_id}`} onClick={() => onOpenSource?.(item.source)}><ClockCounterClockwise size={13} />第 {item.source.record_index + 1} 题 · {item.source.evidence_ids.length} 条证据<ArrowRight size={12} /></button> : <small className="profile-source-empty">历史画像暂无可追溯来源</small>}</article>) : <p className="profile-empty-copy">暂无明确薄弱项。</p>}</section>
           <button type="button" onClick={onPractice}><Target size={16} /> 创建针对性练习</button>
         </aside>
+        </div>
       </div>
     </section>
   );
@@ -1574,10 +1831,12 @@ export function CandidateProfileView({ profile, loading, error, onRetry, onPract
 
 function PageState({ title, detail, action, onAction }) {
   return (
-    <section className="stitch-page-state" role="status">
-      <span><Sparkle size={24} weight="duotone" /></span>
-      <h1>{title}</h1><p>{detail}</p>
-      {action && <button type="button" onClick={onAction}>{action}<ArrowRight size={15} /></button>}
+    <section className="stitch-page page-canvas" role="status">
+      <div className="page-card page-state-card">
+        <span><Sparkle size={24} weight="duotone" /></span>
+        <h1>{title}</h1><p>{detail}</p>
+        {action && <button type="button" onClick={onAction}>{action}<ArrowRight size={15} /></button>}
+      </div>
     </section>
   );
 }

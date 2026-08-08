@@ -146,6 +146,25 @@ test("empty knowledge, evidence, and evaluation states are explicit", () => {
   assert.match(app, /bootError/);
 });
 
+test("project materials distinguish waiting, analyzing, failed, and ready states", () => {
+  assert.match(app, /const analysisStatus = String\(firstValue\(/);
+  assert.match(app, /WAITING_FOR_PROJECT: \{ label: "等待项目"/);
+  assert.match(app, /ANALYZING: \{ label: "正在分析"/);
+  assert.match(app, /FAILED: \{ label: "分析失败"/);
+  assert.match(app, /data-project-ready=\{isProjectReady \? "true" : "false"\}/);
+  assert.match(app, /isProjectReady && \(insights\.find/);
+  assert.match(app, /project-status-state/);
+  assert.match(app, /project-tab-content \$\{isProjectReady \? "" : "is-hidden"\}/);
+});
+
+test("project materials keep evidence selection explicit and technical metadata secondary", () => {
+  assert.match(app, /const currentEvidenceId = selectedEvidenceId;/);
+  assert.match(app, /选择证据查看来源/);
+  assert.match(app, /从结构树或事实中选择一项/);
+  assert.match(app, /className="project-technical-details"/);
+  assert.match(app, /className="project-evidence-empty"/);
+});
+
 test("answer submission adopts backend state without calculating score or profile", () => {
   assert.match(app, /setEvaluation\(state\.evaluation/);
   assert.match(app, /setHistory\(state\.history/);

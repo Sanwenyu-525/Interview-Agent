@@ -1,0 +1,62 @@
+:root {
+  font-family: "Manrope", "PingFang SC", "Microsoft YaHei", sans-serif;
+  color: var(--text-primary);
+  background: var(--background);
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+
+  /* semantic color tokens */
+  --background: #f4f1eb;
+  --surface: #fffefb;
+  --surface-soft: #eeeae3;
+  --surface-raised: #fffefa;
+  --border: #ded8cf;
+  --border-strong: #9a9186;
+  --text-primary: #26241f;
+  --text-secondary: #676158;
+  --primary: #985423;
+  --primary-soft: #f3e7dc;
+  --success: #2f7057;
+  --warning: #8a5a00;
+  --error: #a04432;
+
+  /* legacy aliases kept for existing views while styles migrate */
+  --paper: var(--background);
+  --line: var(--border);
+  --muted: var(--text-secondary);
+  --ink: var(--text-primary);
+  --ink-soft: var(--text-secondary);
+  --amber: var(--primary);
+  --amber-soft: var(--primary-soft);
+  --green: var(--success);
+  --red: var(--error);
+
+  /* spacing, typography, and shape tokens */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --text-xs: 12px;
+  --text-sm: 13px;
+  --text-body: 14px;
+  --text-section: 16px;
+  --text-question: 20px;
+  --text-page-title: 28px;
+  --line-body: 1.57;
+  --radius-control: 8px;
+  --radius-card: 12px;
+  --radius-page: 16px;
+  --control-height: 40px;
+  --focus-ring: 0 0 0 3px rgba(152, 84, 35, .2);
+  --shadow-soft: 0 10px 26px rgba(64, 52, 37, .07);
+
+  /* page canvas */
+  --page-canvas: var(--background);
+  --page-inset-x: 20px;
+  --page-inset-top: 16px;
+  --page-inset-bottom: 20px;
+}

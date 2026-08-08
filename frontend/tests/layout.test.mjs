@@ -3,16 +3,41 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 const css = await readFile(new URL("../src/styles.css", import.meta.url), "utf8");
+const tokens = await readFile(new URL("../src/styles/tokens.css", import.meta.url), "utf8");
+const primitives = await readFile(new URL("../src/styles/primitives.css", import.meta.url), "utf8");
+const main = await readFile(new URL("../src/main.jsx", import.meta.url), "utf8");
 const app = await readFile(new URL("../src/App.jsx", import.meta.url), "utf8");
+const pages = await readFile(new URL("../src/StitchPages.jsx", import.meta.url), "utf8");
 const tauriConfig = JSON.parse(await readFile(new URL("../src-tauri/tauri.conf.json", import.meta.url), "utf8"));
 
-test("desktop interview uses the Stitch four-column evidence layout", () => {
+test("desktop interview keeps a readable evidence-first desktop layout", () => {
   assert.match(app, /className=\{`app-shell stitch-shell view-\$\{activeView\}/);
   assert.match(app, /<PrimarySidebar/);
   assert.match(app, /<InterviewContextRail/);
   assert.match(app, /className=\{`evidence-panel \$\{isEvidenceOpen \? "is-open" : ""\} \$\{isEvidenceCollapsed \? "is-collapsed" : ""\}`\}/);
-  assert.match(css, /\.stitch-shell\.view-interview:not\(\.is-empty-project\)\s*\{[^}]*grid-template-columns:\s*176px var\(--context-rail-width, 216px\) minmax\(320px, 1fr\) var\(--evidence-panel-width, 372px\);/s);
+  assert.match(css, /grid-template-columns:\s*176px var\(--context-rail-width, 216px\) minmax\(600px, 1fr\) minmax\(320px, var\(--evidence-panel-width, 372px\)\);/);
   assert.match(css, /\.view-interview \.evidence-panel\s*\{[^}]*grid-column:\s*4;/s);
+});
+
+test("responsive interview turns navigation and evidence into accessible drawers", () => {
+  assert.match(app, /const \[isNavOpen, setIsNavOpen\] = useState\(false\)/);
+  assert.match(app, /className="mobile-nav-trigger"/);
+  assert.match(pages, /id="app-navigation"/);
+  assert.match(pages, /className="mobile-nav-backdrop"/);
+  assert.match(css, /@media \(min-width: 921px\) and \(max-width: 1279px\)/);
+  assert.match(css, /@media \(max-width: 920px\)/);
+  assert.match(css, /@media \(max-width: 620px\)/);
+  assert.match(css, /\.mobile-nav-trigger\s*\{/);
+  assert.match(css, /\.view-interview \.evidence-panel\.is-open\s*\{[^}]*transform: translateX\(0\)/s);
+});
+
+test("interview focus hierarchy keeps current question open and history collapsed", () => {
+  assert.match(app, /className="agent-message agent-message-agent current-question-message"/);
+  assert.match(app, /className="message-bubble current-question-bubble"/);
+  assert.match(app, /className="history-pair history-collapsed"/);
+  assert.match(app, /const questionProgressLabel/);
+  assert.match(css, /\.view-interview \.current-question-bubble\s*\{/);
+  assert.match(css, /\.view-interview \.history-collapsed\s*\{/);
 });
 
 test("chat workspace exposes keyboard-accessible left and right resize handles", () => {
@@ -48,6 +73,39 @@ test("position preparation has a dedicated multi-position page and question prac
 test("interactive controls expose keyboard focus and reduced-motion fallbacks", () => {
   assert.match(css, /:focus-visible/);
   assert.match(css, /prefers-reduced-motion:\s*reduce/);
+});
+
+test("shared design tokens and primitives remain the single visual baseline", () => {
+  assert.match(tokens, /--background:\s*#f4f1eb/);
+  assert.match(tokens, /--text-primary:\s*#26241f/);
+  assert.match(tokens, /--space-1:\s*4px/);
+  assert.match(tokens, /--control-height:\s*40px/);
+  assert.match(primitives, /\.ui-button/);
+  assert.match(primitives, /\.ui-field/);
+  assert.match(primitives, /\.ui-status/);
+  assert.match(main, /styles\/tokens\.css/);
+  assert.match(main, /styles\/primitives\.css/);
+});
+
+test("management pages keep destructive actions behind accessible more menus", () => {
+  assert.match(pages, /className="ui-more-menu position-more-menu"/);
+  assert.match(pages, /className="ui-more-menu resume-row-menu"/);
+  assert.match(pages, /className="ui-more-menu resume-detail-more-menu"/);
+  assert.match(pages, /默认用于提问/);
+  assert.match(app, /className="ui-more-menu settings-more-menu"/);
+  assert.match(primitives, /\.ui-more-menu/);
+});
+
+test("reports and profile translate low-sample data into cautious user-facing labels", () => {
+  assert.match(pages, /const isPreliminary = sampleCount < 3/);
+  assert.match(pages, /样本可信度：\{confidenceLabel\}/);
+  assert.match(pages, /样本不足，暂不下结论/);
+  assert.match(pages, /function candidateLabel/);
+  assert.match(pages, /function trendLabel/);
+  assert.match(pages, /profile-bar-empty/);
+  assert.match(pages, /weaknesses\.slice\(0, 3\)/);
+  assert.match(css, /\.report-confidence-label/);
+  assert.match(css, /\.profile-bar-empty/);
 });
 
 test("desktop layout uses the center workspace as the primary scroll container", () => {

@@ -31,9 +31,12 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   activateLLMProfile,
   completeSession,
+  createAgent,
   createLLMProfile,
+  deleteAgent,
   deleteSession,
   deleteLLMProfile,
+  getAgents,
   getLLMProfiles,
   getSession,
   getSessionReport,
@@ -51,6 +54,7 @@ import {
   submitAnswerStream,
   testLLMConnection,
   testLLMProfile,
+  updateAgent,
   updateLLMProfile,
   uploadProject,
 } from "./api";
@@ -126,6 +130,13 @@ const LLM_PROVIDER_PRESETS = {
     model: "",
     description: "填写任意 OpenAI 兼容接口",
   },
+};
+
+const AGENT_ROLE_LABELS = {
+  generalist: "全能面试官",
+  questioner: "出题官",
+  evaluator: "评分官",
+  director: "策略官",
 };
 
 const UPLOAD_PHASES = {
@@ -836,7 +847,7 @@ function EmptyInterviewView({ onUploaded, initialError }) {
         <div className="agent-thread">
           <div className="agent-thread-heading"><span className="agent-avatar"><Sparkle size={17} weight="duotone" /></span><span><strong>Interview Agent</strong><small>项目理解与面试教练</small></span><span className="thread-state">等待项目上下文</span></div>
                      <div className="agent-message-list">
-                       <article className="agent-message agent-message-agent">
+  <article className="agent-message agent-message-agent">
               <span className="agent-avatar"><Sparkle size={17} weight="duotone" /></span>
               <div className="agent-message-body"><span className="message-meta">Interview Agent · 现在</span><div className="message-bubble"><p>你好，我会先理解你的项目结构、技术选择和关键流程，再围绕真实证据开始面试。</p><p>从输入框左侧的 <strong>+</strong> 添加项目目录即可。</p></div></div>
             </article>
@@ -885,6 +896,16 @@ function ProjectView({ session }) {
   const relations = Array.isArray(universalModel.relations) ? universalModel.relations : [];
   const flows = Array.isArray(universalModel.flows) ? universalModel.flows : [];
   const insights = Array.isArray(universalModel.insights) ? universalModel.insights : [];
+  const analysisStatus = String(firstValue(
+    session.status?.analysis_status,
+    session.project?.project_id ? "READY" : "WAITING_FOR_PROJECT",
+  )).toUpperCase();
+  const isProjectReady = analysisStatus === "READY";
+  const analysisStatusCopy = {
+    WAITING_FOR_PROJECT: { label: "等待项目", title: "先添加一个项目", detail: "添加项目目录后，系统会提取结构、技术栈、流程和可追溯证据。" },
+    ANALYZING: { label: "正在分析", title: "项目分析进行中", detail: "项目结构和证据准备完成后，这里会显示可复盘的项目资料。" },
+    FAILED: { label: "分析失败", title: "项目分析未完成", detail: session.status?.error || "请检查项目内容后重试分析。" },
+  }[analysisStatus] || { label: analysisStatus, title: "项目资料暂不可用", detail: "项目资料准备完成后，这里会显示结构、知识和证据。" };
   const fallbackStructure = components.map((component, index) => ({
     id: component.name || `component-${index}`,
     name: component.name,
@@ -905,8 +926,10 @@ function ProjectView({ session }) {
   const evidenceEntries = Array.isArray(universalModel.evidence) && universalModel.evidence.length > 0
     ? universalModel.evidence
     : legacyEvidence;
-  const currentEvidenceId = selectedEvidenceId || session.evidenceIds?.[0] || evidenceEntries[0]?.id || "";
-  const selectedEvidenceRaw = evidenceEntries.find((item) => item.id === currentEvidenceId) || evidenceEntries[0] || null;
+  const currentEvidenceId = selectedEvidenceId;
+  const selectedEvidenceRaw = currentEvidenceId
+    ? evidenceEntries.find((item) => item.id === currentEvidenceId) || null
+    : null;
   const selectedEvidence = normalizeEvidence(selectedEvidenceRaw, currentEvidenceId ? [currentEvidenceId] : []);
   const selectedComponent = components.find((component) => component.name === selectedProjectItem);
   const activeFlow = flows[0] || null;
@@ -916,9 +939,9 @@ function ProjectView({ session }) {
     : dependencyEntries[0]
       ? [dependencyEntries[0][0], ...dependencyEntries[0][1]]
       : [];
-  const risk = insights.find((item) => ["risk", "weakness", "gap"].includes(String(item.kind || "").toLowerCase()))?.summary
+  const risk = isProjectReady && (insights.find((item) => ["risk", "weakness", "gap"].includes(String(item.kind || "").toLowerCase()))?.summary
     || session.project?.weaknesses?.[0]
-    || "";
+    || "");
   const linkedFacts = [
     ...components
       .filter((component) => component.evidenceIds.includes(currentEvidenceId))
@@ -927,7 +950,9 @@ function ProjectView({ session }) {
       .filter((topic) => (topic.evidence_ids || topic.evidence || []).includes(currentEvidenceId))
       .map((topic) => ({ label: topic.name, kind: "可提问主题" })),
   ];
-  const artifactType = firstValue(universalModel.identity?.artifact_type, session.status?.analyzer_id, session.projectMeta);
+  const artifactType = firstValue(universalModel.identity?.artifact_type, session.projectMeta);
+  const analyzerId = firstValue(session.status?.analyzer_id, "未指定");
+  const schemaVersion = firstValue(session.status?.schema_version, "未指定");
 
   async function handleOpenDirectory() {
     if (!session.projectPath) {
@@ -951,13 +976,13 @@ function ProjectView({ session }) {
   }
 
   return (
-    <div className="project-intelligence">
+    <div className="project-intelligence" data-project-ready={isProjectReady ? "true" : "false"}>
       <aside className="project-structure-pane" aria-label="项目结构">
         <div className="project-structure-heading">
-          <div><strong>{session.projectName || "未命名项目"}</strong><small>{session.status?.analyzer_id || "Analyzer 未知"}</small></div>
-          <span className="analysis-ready"><span className="status-dot" />{session.status?.analysis_status || "READY"}</span>
+          <div><strong>{session.projectName || "未命名项目"}</strong><small>项目结构 · {visibleStructure.length} 个节点</small></div>
+          <span className={`analysis-ready is-${analysisStatus.toLowerCase()}`}><span className="status-dot" />{isProjectReady ? "已就绪" : analysisStatusCopy.label}</span>
         </div>
-        <label className="project-search">
+          <label className="project-search ui-field">
           <MagnifyingGlass size={15} />
           <input value={projectSearch} onChange={(event) => setProjectSearch(event.target.value)} placeholder="搜索项目结构" />
         </label>
@@ -989,14 +1014,18 @@ function ProjectView({ session }) {
           <div>
             <span className="project-capability-label">当前能力</span>
             <h1>{session.projectName || universalModel.identity?.name || "未命名项目"}</h1>
-            <div className="project-identity-meta"><span>{artifactType || "项目类型未知"}</span><span>schema v{session.status?.schema_version || "—"}</span></div>
+            <div className="project-identity-meta"><span>{artifactType || "项目类型未知"}</span><span>{evidenceEntries.length} 条可追溯证据</span></div>
           </div>
-          <button className="project-open-button" type="button" onClick={handleOpenDirectory} disabled={isOpeningDirectory}>
+          <details className="project-technical-details">
+            <summary>技术详情</summary>
+            <span>分析器：{analyzerId}</span><span>模型版本：{schemaVersion}</span>
+          </details>
+          <button className="project-open-button ui-button ui-button-secondary" type="button" onClick={handleOpenDirectory} disabled={isOpeningDirectory}>
             <ArrowUpRight size={16} /> {isOpeningDirectory ? "正在打开" : "打开项目目录"}
           </button>
         </header>
         {directoryError && <div className="form-error"><WarningCircle size={15} /> {directoryError}</div>}
-        <nav className="project-tabs" aria-label="项目智能资料视图">
+        <nav className={`project-tabs ${isProjectReady ? "" : "is-hidden"}`} aria-label="项目智能资料视图">
           {[
             ["overview", "概览"],
             ["components", "组件"],
@@ -1007,10 +1036,11 @@ function ProjectView({ session }) {
           ))}
         </nav>
 
-        <div className="project-tab-content">
+        {!isProjectReady && <section className={`project-status-state is-${analysisStatus.toLowerCase()}`} aria-live="polite"><span className="project-status-icon"><FolderSimple size={24} /></span><h2>{analysisStatusCopy.title}</h2><p>{analysisStatusCopy.detail}</p>{analysisStatus === "WAITING_FOR_PROJECT" && <small>可从面试工作台底部输入框左侧的“+”添加项目。</small>}</section>}
+        <div className={`project-tab-content ${isProjectReady ? "" : "is-hidden"}`}>
           {activeProjectTab === "overview" && (
             <>
-              <section className={`project-risk-banner ${risk ? "" : "is-clear"}`}>
+              <section className={`project-risk-banner ${risk ? "" : "is-clear"} ui-status`} data-tone={risk ? "warning" : "success"}>
                 {risk ? <ShieldWarning size={18} weight="duotone" /> : <CheckCircle size={18} />}
                 <span><strong>{risk ? "识别到项目风险" : "暂无明确风险"}</strong><small>{risk || "当前项目知识中没有可展示的风险事实。"}</small></span>
               </section>
@@ -1074,7 +1104,7 @@ function ProjectView({ session }) {
 
       <aside className="project-evidence-pane" aria-label="证据追溯">
         <div className="project-evidence-heading">
-          <div><span className="view-kicker">证据追溯</span><h2>{selectedEvidence.file || "暂无证据"}</h2></div>
+          <div><span className="view-kicker">证据追溯</span><h2>{selectedEvidence.available ? (selectedEvidence.file || selectedProjectItem || "已选证据") : "选择证据查看来源"}</h2></div>
           {confidenceLabel(selectedEvidence.confidence) && <span className="confidence-badge">置信度 {confidenceLabel(selectedEvidence.confidence)}</span>}
         </div>
         {selectedEvidence.available ? (
@@ -1086,15 +1116,15 @@ function ProjectView({ session }) {
               <div className="project-section-heading"><span>关联事实</span><small>{linkedFacts.length} 项</small></div>
               {linkedFacts.length === 0 ? <div className="empty-state">暂无关联事实</div> : linkedFacts.map((fact) => <div className="linked-fact" key={`${fact.kind}-${fact.label}`}><span>{fact.kind}</span><strong>{fact.label}</strong></div>)}
             </section>
-            <div className="project-evidence-source"><span>Evidence ID</span><code>{currentEvidenceId || "—"}</code></div>
+            <details className="project-technical-details evidence-technical-details"><summary>技术详情</summary><span>Evidence ID</span><code>{currentEvidenceId || "—"}</code></details>
           </>
-        ) : <div className="empty-state"><FileCode size={21} /> 暂无证据</div>}
+        ) : <div className="project-evidence-empty"><FileCode size={21} /><strong>从结构树或事实中选择一项</strong><p>选择后，这里会显示文件、位置、摘要和关联事实。</p></div>}
       </aside>
     </div>
   );
 }
 
-function SettingsView({ settings, profiles, profilesLoading, isLoading, isSaving, isTesting, notice, error, onSave, onTest, onCreateProfile, onUpdateProfile, onDeleteProfile, onActivateProfile, onTestProfile }) {
+function SettingsView({ settings, profiles, profilesLoading, isLoading, isSaving, isTesting, notice, error, onSave, onTest, onCreateProfile, onUpdateProfile, onDeleteProfile, onActivateProfile, onTestProfile, agents, agentsLoading, agentNotice, agentError, isAgentSaving, onCreateAgent, onUpdateAgent, onDeleteAgent }) {
   const [form, setForm] = useState(EMPTY_LLM_SETTINGS);
   const [selectedProvider, setSelectedProvider] = useState("custom");
   const [editingProfileId, setEditingProfileId] = useState("");
@@ -1102,6 +1132,11 @@ function SettingsView({ settings, profiles, profilesLoading, isLoading, isSaving
   const [profileActionId, setProfileActionId] = useState("");
   const [formError, setFormError] = useState("");
   const [profileTestResult, setProfileTestResult] = useState(null);
+  const [editingAgent, setEditingAgent] = useState(null);
+  const [agentForm, setAgentForm] = useState({ name: "", role: "questioner", persona: "", profile_id: "" });
+  const [agentFormError, setAgentFormError] = useState("");
+  const [agentActionId, setAgentActionId] = useState("");
+  const [settingsTab, setSettingsTab] = useState("llm");
 
   useEffect(() => {
     if (!settings) return;
@@ -1223,6 +1258,46 @@ function SettingsView({ settings, profiles, profilesLoading, isLoading, isSaving
     if (editingProfileId === profileId) startNewProfile();
   }
 
+  function startNewAgent() {
+    setEditingAgent(null);
+    setAgentForm({ name: "", role: "questioner", persona: "", profile_id: "" });
+    setAgentFormError("");
+  }
+
+  function startEditAgent(agent) {
+    setEditingAgent(agent);
+    setAgentForm({ name: agent.name, role: agent.role, persona: agent.persona, profile_id: agent.profile_id || "" });
+    setAgentFormError("");
+  }
+
+  async function handleAgentSubmit(event) {
+    event.preventDefault();
+    const next = { ...agentForm, name: agentForm.name.trim(), persona: agentForm.persona.trim() };
+    if (!next.name || !next.persona) {
+      setAgentFormError("请填写 Agent 名称和角色设定。");
+      return;
+    }
+    if (editingAgent) {
+      await onUpdateAgent(editingAgent.id, next);
+      setEditingAgent(null);
+      startNewAgent();
+    } else {
+      await onCreateAgent(next);
+      startNewAgent();
+    }
+  }
+
+  async function handleAgentDelete(agent) {
+    if (!globalThis.confirm?.(`确定删除自定义 Agent“${agent.name}”吗？`)) return;
+    setAgentActionId(agent.id);
+    try {
+      await onDeleteAgent(agent.id);
+      if (editingAgent?.id === agent.id) startNewAgent();
+    } finally {
+      setAgentActionId("");
+    }
+  }
+
   const busy = isSaving || isTesting;
   const presetModels = LLM_PROVIDER_PRESETS[selectedProvider]?.models || [];
   return (
@@ -1234,6 +1309,11 @@ function SettingsView({ settings, profiles, profilesLoading, isLoading, isSaving
           <p>配置驱动项目理解和面试评价的大模型。</p>
         </div>
       </div>
+      <div className="settings-tabs" role="tablist" aria-label="设置分类">
+        <button className={settingsTab === "llm" ? "is-active" : ""} type="button" role="tab" aria-selected={settingsTab === "llm"} onClick={() => setSettingsTab("llm")}>配置大模型</button>
+        <button className={settingsTab === "agent" ? "is-active" : ""} type="button" role="tab" aria-selected={settingsTab === "agent"} onClick={() => setSettingsTab("agent")}>Agent 管理</button>
+      </div>
+      {settingsTab === "llm" && (
       <section className="settings-panel llm-settings-card">
         <div className="settings-section-heading">
           <div><span className="view-kicker">模型服务</span><h2>大模型配置</h2></div>
@@ -1250,9 +1330,12 @@ function SettingsView({ settings, profiles, profilesLoading, isLoading, isSaving
                   <span className="configured-model-status">{profile.active ? "当前使用" : "未启用"}</span>
                   <div className="configured-model-actions">
                     {!profile.active && <button type="button" onClick={() => handleProfileAction(onActivateProfile, profile.id)} disabled={isSaving || profileActionId === profile.id}>设为当前</button>}
-                    <button type="button" onClick={() => startEditProfile(profile)} disabled={isSaving}>编辑</button>
                     <button type="button" onClick={() => handleProfileTest(profile.id)} disabled={isTesting || profileActionId === profile.id}>测试</button>
-                    <button className="is-danger" type="button" onClick={() => handleDelete(profile.id)} disabled={isSaving || profileActionId === profile.id}>删除</button>
+                    <button type="button" onClick={() => startEditProfile(profile)} disabled={isSaving}>编辑</button>
+                    <details className="ui-more-menu settings-more-menu">
+                      <summary aria-label={`更多配置操作：${profile.name}`}><DotsThree size={17} /></summary>
+                      <div><button className="is-danger" type="button" onClick={() => handleDelete(profile.id)} disabled={isSaving || profileActionId === profile.id}>删除配置</button></div>
+                    </details>
                   </div>
                 </div>
               ))}
@@ -1330,6 +1413,73 @@ function SettingsView({ settings, profiles, profilesLoading, isLoading, isSaving
         {notice && <div className="settings-feedback is-success" role="status" aria-live="polite"><CheckCircle size={17} />{notice}</div>}
         {error && <div className="settings-feedback is-error" role="alert"><WarningCircle size={17} />{error}</div>}
       </section>
+      )}
+      {settingsTab === "agent" && (
+      <section className="settings-panel agent-settings-card">
+        <div className="settings-section-heading">
+          <div><span className="view-kicker">Agent 角色</span><h2>Agent 管理</h2></div>
+          <span className="setting-value">{agentsLoading ? "读取中…" : `${agents.length} 个角色`}</span>
+        </div>
+        <div className="settings-subheading agent-list-heading"><span>角色列表</span><small>内置角色不可修改，自定义角色可在新建复盘会话中选用</small></div>
+        {agentsLoading ? <div className="configured-model-empty">正在读取 Agent 列表…</div> : agents.length ? (
+          <div className="agent-list">
+            {agents.map((agent) => (
+              <div className={`agent-card ${editingAgent?.id === agent.id ? "is-editing" : ""}`} key={agent.id}>
+                <div className="agent-card-head">
+                  <strong>{agent.name}</strong>
+                  <div className="configured-model-actions">
+                    {!agent.builtin && (
+                      <>
+                        <button type="button" onClick={() => startEditAgent(agent)} disabled={isAgentSaving}>编辑</button>
+                        <details className="ui-more-menu settings-more-menu">
+                          <summary aria-label={`更多 Agent 操作：${agent.name}`}><DotsThree size={17} /></summary>
+                          <div><button className="is-danger" type="button" onClick={() => handleAgentDelete(agent)} disabled={isAgentSaving || agentActionId === agent.id}>删除 Agent</button></div>
+                        </details>
+                      </>
+                    )}
+                  </div>
+                </div>
+                <div className="agent-card-copy">
+                  <span>{AGENT_ROLE_LABELS[agent.role] || agent.role}{agent.builtin ? " · 内置" : ""}</span>
+                  <small>{agent.persona}</small>
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : <div className="configured-model-empty">当前没有自定义 Agent，可在下方创建。</div>}
+        <div className="settings-subheading agent-form-heading"><span>{editingAgent ? "编辑自定义 Agent" : "新增自定义 Agent"}</span>{editingAgent && <button className="settings-inline-action" type="button" onClick={startNewAgent} disabled={isAgentSaving}>取消编辑</button>}</div>
+        <form className="agent-settings-form" onSubmit={handleAgentSubmit}>
+          <label className="settings-field">
+            <span>名称</span>
+            <input value={agentForm.name} onChange={(event) => setAgentForm((current) => ({ ...current, name: event.target.value }))} disabled={isAgentSaving} placeholder="例如：压力出题官" autoComplete="off" />
+          </label>
+          <label className="settings-field">
+            <span>角色</span>
+            <select value={agentForm.role} onChange={(event) => setAgentForm((current) => ({ ...current, role: event.target.value }))} disabled={isAgentSaving}>
+              {Object.entries(AGENT_ROLE_LABELS).map(([role, label]) => <option value={role} key={role}>{label}</option>)}
+            </select>
+          </label>
+          <label className="settings-field">
+            <span>角色设定（persona）</span>
+            <textarea rows={3} value={agentForm.persona} onChange={(event) => setAgentForm((current) => ({ ...current, persona: event.target.value }))} disabled={isAgentSaving} placeholder="描述这个 Agent 的风格与职责；只替换角色描述，JSON 输出契约由后端固定" />
+          </label>
+          <label className="settings-field">
+            <span>绑定模型档案</span>
+            <select value={agentForm.profile_id} onChange={(event) => setAgentForm((current) => ({ ...current, profile_id: event.target.value }))} disabled={isAgentSaving}>
+              <option value="">跟随当前激活配置</option>
+              {(profiles?.profiles || []).map((profile) => <option value={profile.id} key={profile.id}>{profile.name}（{profile.model}）</option>)}
+            </select>
+            <small>不绑定则使用设置页当前激活的大模型配置。</small>
+          </label>
+          {agentFormError && <small className="settings-form-error">{agentFormError}</small>}
+          <div className="settings-form-actions">
+            <button className="primary-action" type="submit" disabled={isAgentSaving}>{isAgentSaving ? "正在保存…" : editingAgent ? "保存修改" : "创建 Agent"}<ArrowRight size={16} /></button>
+          </div>
+        </form>
+        {agentNotice && <div className="settings-feedback is-success" role="status" aria-live="polite"><CheckCircle size={17} />{agentNotice}</div>}
+        {agentError && <div className="settings-feedback is-error" role="alert"><WarningCircle size={17} />{agentError}</div>}
+      </section>
+      )}
       <section className="settings-panel settings-runtime-panel">
         <div className="settings-row"><span><strong>面试引擎</strong><small>Python API + SQLite 本地会话</small></span><span className="setting-value is-online"><span className="status-dot" /> 在线</span></div>
         <div className="settings-row"><span><strong>提交回答</strong><small>评分和下一题由后端返回；Ctrl / ⌘ + Enter 换行</small></span><kbd>Enter</kbd></div>
@@ -1370,11 +1520,17 @@ function App() {
   const [isRubricOpen, setIsRubricOpen] = useState(false);
   const [isQuestionMarked, setIsQuestionMarked] = useState(false);
   const [isMoreMenuOpen, setIsMoreMenuOpen] = useState(false);
+  const [isNavOpen, setIsNavOpen] = useState(false);
   const [selectedStructureItem, setSelectedStructureItem] = useState("");
   const [interactionNotice, showInteractionNotice] = useAutoDismiss();
   const [llmSettings, setLlmSettings] = useState(null);
   const [llmProfiles, setLlmProfiles] = useState({ active_id: null, profiles: [] });
   const [isLLMProfilesLoading, setIsLLMProfilesLoading] = useState(true);
+  const [agents, setAgents] = useState([]);
+  const [isAgentsLoading, setIsAgentsLoading] = useState(true);
+  const [agentNotice, setAgentNotice] = useState("");
+  const [agentError, setAgentError] = useState("");
+  const [isAgentSaving, setIsAgentSaving] = useState(false);
   const [isLLMSettingsLoading, setIsLLMSettingsLoading] = useState(true);
   const [isLLMSettingsSaving, setIsLLMSettingsSaving] = useState(false);
   const [isLLMSettingsTesting, setIsLLMSettingsTesting] = useState(false);
@@ -1452,6 +1608,23 @@ function App() {
       })
       .finally(() => {
         if (!cancelled) setIsLLMProfilesLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    getAgents()
+      .then((result) => {
+        if (!cancelled) setAgents(result?.agents || []);
+      })
+      .catch((cause) => {
+        if (!cancelled) setAgentError(`无法读取 Agent 列表：${errorMessage(cause)}`);
+      })
+      .finally(() => {
+        if (!cancelled) setIsAgentsLoading(false);
       });
     return () => {
       cancelled = true;
@@ -1553,6 +1726,11 @@ function App() {
     }];
   }, [session]);
 
+  const currentQuestionNumber = session ? Number(session.questionNumber) || history.length + 1 : 1;
+  const questionProgressLabel = session?.totalQuestions
+    ? `${Math.min(currentQuestionNumber, Number(session.totalQuestions))} / ${session.totalQuestions}`
+    : `第 ${currentQuestionNumber} 题`;
+
   function resizeLimit(side) {
     const viewportWidth = globalThis.innerWidth || 1440;
     const otherPanelWidth = side === "left"
@@ -1582,7 +1760,7 @@ function App() {
   });
 
   function handleEvidenceToggle() {
-    if (globalThis.matchMedia?.("(max-width: 980px)").matches) {
+    if (globalThis.matchMedia?.("(max-width: 1279px)").matches) {
       setIsEvidenceCollapsed(false);
       setIsEvidenceOpen((open) => !open);
       return;
@@ -1591,6 +1769,7 @@ function App() {
   }
 
   function handleBackToProject() {
+    setIsNavOpen(false);
     setIsEvidenceOpen(false);
     setIsRubricOpen(false);
     setIsMoreMenuOpen(false);
@@ -1623,6 +1802,7 @@ function App() {
   }
 
   function handleMoreNavigation(view) {
+    setIsNavOpen(false);
     setIsMoreMenuOpen(false);
     setIsEvidenceOpen(false);
     setIsRubricOpen(false);
@@ -1844,6 +2024,7 @@ function App() {
 
   function handleCreateTask() {
     if (!sessionProjectId(session)) return;
+    setIsNavOpen(false);
     setActiveView("session-new");
     showInteractionNotice("");
   }
@@ -1880,18 +2061,19 @@ function App() {
   }
 
   function handlePrimaryNavigation(view) {
+    setIsNavOpen(false);
     if (view === "report") setReportFocusIndex(null);
     setActiveView(view);
   }
 
-  async function handleCreateReviewSession({ candidateId, reviewMode, title = "", topic = "" }) {
+  async function handleCreateReviewSession({ candidateId, reviewMode, title = "", topic = "", agentMode = "single", agentIds = null }) {
     const projectId = sessionProjectId(session);
     if (!projectId || isCreatingTask) return;
     setIsCreatingTask(true);
     showInteractionNotice(topic ? `正在为主题“${topic}”创建新会话…` : "", { persist: true });
     try {
       const defaultTitle = title || `任务 ${tasks.length + 1}`;
-      const created = await startInterviewSession(projectId, candidateId, reviewMode, defaultTitle, topic);
+      const created = await startInterviewSession(projectId, candidateId, reviewMode, defaultTitle, topic, undefined, undefined, agentMode, agentIds);
       const state = created.state || {};
       const sessionList = await getSessions({ projectId, candidateId });
       const serverTasks = tasksFromSessionList(sessionList);
@@ -2034,6 +2216,62 @@ function App() {
     }
   }
 
+  async function refreshAgents() {
+    const result = await getAgents();
+    setAgents(result?.agents || []);
+    return result;
+  }
+
+  async function handleCreateAgent(payload) {
+    setIsAgentSaving(true);
+    setAgentNotice("");
+    setAgentError("");
+    try {
+      const created = await createAgent(payload);
+      await refreshAgents();
+      setAgentNotice("自定义 Agent 已创建。 ");
+      return created;
+    } catch (cause) {
+      setAgentError(`新增失败：${errorMessage(cause)}`);
+      throw cause;
+    } finally {
+      setIsAgentSaving(false);
+    }
+  }
+
+  async function handleUpdateAgent(agentId, payload) {
+    setIsAgentSaving(true);
+    setAgentNotice("");
+    setAgentError("");
+    try {
+      const updated = await updateAgent(agentId, payload);
+      await refreshAgents();
+      setAgentNotice("自定义 Agent 已更新。 ");
+      return updated;
+    } catch (cause) {
+      setAgentError(`更新失败：${errorMessage(cause)}`);
+      throw cause;
+    } finally {
+      setIsAgentSaving(false);
+    }
+  }
+
+  async function handleDeleteAgent(agentId) {
+    setIsAgentSaving(true);
+    setAgentNotice("");
+    setAgentError("");
+    try {
+      await deleteAgent(agentId);
+      await refreshAgents();
+      setAgentNotice("自定义 Agent 已删除。 ");
+    } catch (cause) {
+      setAgentError(`删除失败：${errorMessage(cause)}`);
+      throw cause;
+    } finally {
+      setIsAgentSaving(false);
+    }
+  }
+
   function handleKeyDown(event) {
     if (event.key === "Enter" && !event.shiftKey && !event.metaKey && !event.ctrlKey && !event.altKey) {
       event.preventDefault();
@@ -2086,7 +2324,8 @@ function App() {
           "--evidence-panel-width": isEvidenceCollapsed ? "40px" : `${evidencePanelWidth}px`,
         }}
       >
-      <PrimarySidebar activeView={activeView} onNavigate={handlePrimaryNavigation} onNewSession={handleCreateTask} hasProject={Boolean(sessionProjectId(session))} />
+      <PrimarySidebar activeView={activeView} onNavigate={handlePrimaryNavigation} onNewSession={handleCreateTask} hasProject={Boolean(sessionProjectId(session))} isOpen={isNavOpen} onClose={() => setIsNavOpen(false)} />
+      <button className="mobile-nav-trigger" type="button" aria-label="打开应用导航" aria-controls="app-navigation" aria-expanded={isNavOpen} onClick={() => setIsNavOpen(true)}><ListBullets size={18} /><span>导航</span></button>
       {activeView === "interview" ? (
         needsUpload ? (
           <EmptyInterviewView onUploaded={handleUploaded} initialError={startupUploadError} />
@@ -2096,7 +2335,7 @@ function App() {
               <section className="workspace interview-workspace" aria-label="面试工作台">
                 <div className="workspace-resizer is-left" role="separator" aria-label="调整面试结构宽度" aria-orientation="vertical" aria-valuemin={MIN_CONTEXT_RAIL_WIDTH} aria-valuemax={MAX_CONTEXT_RAIL_WIDTH} aria-valuenow={contextRailWidth} tabIndex={0} {...leftResize.handlers} />
                 <header className="workspace-header">
-                  <div className="question-breadcrumb"><button className="icon-button" aria-label="返回项目资料" type="button" onClick={handleBackToProject}><ArrowRight size={17} className="back-icon" /></button><span>{session.questionNumber || "当前问题"} {session.topic && `问题：${session.topic}`}</span></div>
+                  <div className="question-breadcrumb"><button className="icon-button" aria-label="返回项目资料" type="button" onClick={handleBackToProject}><ArrowRight size={17} className="back-icon" /></button><span>{questionProgressLabel} {session.topic && `问题：${session.topic}`}</span></div>
                   <div className="header-actions">
                     <div className="engine-status"><span className="status-dot" />{session.sessionState === "completed" ? "会话已结束" : "面试引擎在线"}</div>
                     <button className={`text-button evidence-toggle ${isEvidenceOpen ? "is-active" : ""}`} type="button" aria-expanded={isEvidenceOpen} aria-controls="evidence-drawer" onClick={handleEvidenceToggle}><FileCode size={18} /> 证据</button>
@@ -2110,10 +2349,12 @@ function App() {
                 {interactionNotice && <div className="workspace-feedback" role="status" aria-live="polite">{interactionNotice}</div>}
              <div className="workspace-content agent-workspace-content">
                  <div className="agent-thread">
-                  <div className="agent-thread-heading"><span className="agent-avatar"><Sparkle size={17} weight="duotone" /></span><span><strong>Interview Agent</strong><small>正在围绕 {session.topic || "当前项目"} 提问</small></span><span className="thread-state">第 {session.questionNumber || "—"} 题</span></div>
+                   <div className="agent-thread-heading"><span className="agent-avatar"><Sparkle size={17} weight="duotone" /></span><span><strong>Interview Agent</strong><small>正在围绕 {session.topic || "当前项目"} 提问</small></span><span className="thread-state">{questionProgressLabel}</span></div>
                   <div className="agent-message-list" ref={messageListRef}>
                    {history.map((record, index) => (
-                     <div className="history-pair" key={`${record.question || "question"}-${index}`}>
+                     <details className="history-pair history-collapsed" key={`${record.question || "question"}-${index}`}>
+                       <summary className="history-summary"><span className="history-summary-index">已完成 {index + 1}</span><span className="history-summary-question">{record.question || "历史问题"}</span>{record.evaluation?.score !== undefined && <strong>评分 {record.evaluation.score} / 100</strong>}</summary>
+                       <div className="history-pair-body">
                        <article className="agent-message agent-message-agent history-message">
                          <span className="agent-avatar"><Sparkle size={17} weight="duotone" /></span>
                          <div className="agent-message-body"><span className="message-meta">面试官 · 第 {index + 1} 题</span><div className="message-bubble history-question-bubble"><p>{record.question || "历史问题"}</p></div>{record.analysis && <details className="process-details"><summary><span>出题思路</span></summary><p className="analysis-content">{record.analysis}</p></details>}</div>
@@ -2136,11 +2377,12 @@ function App() {
                          <span className="agent-avatar"><Sparkle size={17} weight="duotone" /></span>
                          <div className="agent-message-body"><span className="message-meta">面试官 · 参考回答</span><div className="message-bubble"><p>{record.evaluation.reference_answer}</p></div></div>
                        </article>}
-                     </div>
+                       </div>
+                     </details>
                    ))}
-<article className="agent-message agent-message-agent">
-                      <span className="agent-avatar"><Sparkle size={17} weight="duotone" /></span>
-                      <div className="agent-message-body"><span className="message-meta">面试官 · 当前问题</span><div className="message-bubble"><h1>{session.question || "暂无问题"}</h1>{session.context && <p>{session.context}</p>}{session.instruction && <p>{session.instruction}</p>}</div>{session.questionAnalysis && <details className="process-details"><summary><span>出题思路</span></summary><p className="analysis-content">{session.questionAnalysis}</p></details>}</div>
+ <article className="agent-message agent-message-agent current-question-message">
+                       <span className="agent-avatar"><Sparkle size={17} weight="duotone" /></span>
+                        <div className="agent-message-body"><span className="message-meta">面试官 · 当前问题</span><div className="message-bubble current-question-bubble"><h1>{session.question || "暂无问题"}</h1>{session.context && <p>{session.context}</p>}{session.instruction && <p>{session.instruction}</p>}</div>{session.questionAnalysis && <details className="process-details"><summary><span>出题思路</span></summary><p className="analysis-content">{session.questionAnalysis}</p></details>}</div>
                     </article>
                     {isSubmitting && <>
                       <article className="agent-message agent-message-user history-message">
@@ -2187,7 +2429,7 @@ function App() {
       ) : activeView === "profile" ? (
         <CandidateProfileView profile={candidateProfile} loading={isCandidateProfileLoading} error={candidateProfileError} onRetry={loadCandidateProfile} onPractice={() => setActiveView("session-new")} onOpenSource={handleOpenWeaknessSource} />
       ) : (
-        <section className="workspace secondary-workspace stitch-settings-workspace" aria-label="应用设置"><SettingsView settings={llmSettings} profiles={llmProfiles} profilesLoading={isLLMProfilesLoading} isLoading={isLLMSettingsLoading} isSaving={isLLMSettingsSaving} isTesting={isLLMSettingsTesting} notice={llmSettingsNotice} error={llmSettingsError} onSave={handleSaveLLMSettings} onTest={handleTestLLMConnection} onCreateProfile={handleCreateLLMProfile} onUpdateProfile={handleUpdateLLMProfile} onDeleteProfile={handleDeleteLLMProfile} onActivateProfile={handleActivateLLMProfile} onTestProfile={handleTestLLMProfile} /></section>
+        <section className="workspace secondary-workspace stitch-settings-workspace" aria-label="应用设置"><SettingsView settings={llmSettings} profiles={llmProfiles} profilesLoading={isLLMProfilesLoading} isLoading={isLLMSettingsLoading} isSaving={isLLMSettingsSaving} isTesting={isLLMSettingsTesting} notice={llmSettingsNotice} error={llmSettingsError} onSave={handleSaveLLMSettings} onTest={handleTestLLMConnection} onCreateProfile={handleCreateLLMProfile} onUpdateProfile={handleUpdateLLMProfile} onDeleteProfile={handleDeleteLLMProfile} onActivateProfile={handleActivateLLMProfile} onTestProfile={handleTestLLMProfile} agents={agents} agentsLoading={isAgentsLoading} agentNotice={agentNotice} agentError={agentError} isAgentSaving={isAgentSaving} onCreateAgent={handleCreateAgent} onUpdateAgent={handleUpdateAgent} onDeleteAgent={handleDeleteAgent} /></section>
       )}
       </main>
     </AppWindow>
