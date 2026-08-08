@@ -61,6 +61,17 @@ class RuleBasedQuestionGenerator:
         review_direction="",
         context=None,
     ):
+        position_requirement = str(getattr(context, "position_requirement", "") or "")
+        if position_requirement:
+            if review_direction in ("basic", "deep", "architecture", "clarify"):
+                return (
+                    f"岗位要求提到“{position_requirement}”。请结合{project.project_name}中"
+                    f"“{topic.name}”的具体实现，说明你是怎么做到的、如何验证结果，以及有哪些关键权衡。"
+                )
+            return (
+                f"岗位要求提到“{position_requirement}”。请用{project.project_name}中的真实实现"
+                f"说明你的做法和最终结果，并给出可追溯的项目证据。"
+            )
         resume_claims = tuple(getattr(context, "resume_claims", ()) or ())
         matched_claim = next(
             (
@@ -153,6 +164,7 @@ class InterviewAgent:
         policy: ReviewPolicy | None = None,
         review_mode: ReviewMode | str = ReviewMode.TECHNICAL_INTERVIEW,
         outline_builder=None,
+        policy_builder=None,
     ):
         self.repository = repository
         self.question_generator = question_generator or RuleBasedQuestionGenerator()
@@ -161,6 +173,7 @@ class InterviewAgent:
         self.profile_updater = profile_updater or ProfileUpdater()
         self.pending_profile_update: ProfileUpdate | None = None
         self.policy = policy or policy_for_mode(review_mode)
+        self.policy_builder = policy_builder
         self.outline_builder = outline_builder
         if outline_builder is None and (
             question_generator is None
@@ -240,6 +253,7 @@ class InterviewAgent:
             question_evidence_ids=question_result.evidence_ids,
             question_covered_points=question_result.covered_points,
             question_missing_points=question_result.missing_points,
+            question_analysis=question_result.analysis,
             resume_claims=resume_claims,
         )
 
@@ -291,6 +305,8 @@ class InterviewAgent:
             project=state.project,
             evidence=evidence,
             resume_claims=state.resume_claims,
+            position_requirement=state.position_requirement,
+            position_title=state.position_title,
         )
         record = AnswerRecord(
             question=state.question,
@@ -298,6 +314,7 @@ class InterviewAgent:
             topic=state.current_topic.name,
             level=state.level,
             evaluation=evaluation,
+            analysis=state.question_analysis,
         )
         return {
             "evaluation": evaluation,
@@ -355,6 +372,8 @@ class InterviewAgent:
             history=history,
             review_direction=direction,
             resume_claims=resume_claims,
+            position_requirement=state.position_requirement,
+            position_title=state.position_title,
         )
         return {
             "next_question": next_question,
@@ -398,6 +417,7 @@ class InterviewAgent:
             question_evidence_ids=question_result.evidence_ids,
             question_covered_points=question_result.covered_points,
             question_missing_points=question_result.missing_points,
+            question_analysis=question_result.analysis,
             last_submitted_question=state.question,
             last_submitted_answer=answer,
         )
@@ -406,13 +426,24 @@ class InterviewAgent:
         return updated
 
     def _generate_question(
-        self, *, topic, project, level, history, review_direction="", resume_claims=()
+        self,
+        *,
+        topic,
+        project,
+        level,
+        history,
+        review_direction="",
+        resume_claims=(),
+        position_requirement="",
+        position_title="",
     ):
         context = self._review_context(
             project,
             topic,
             review_direction=review_direction,
             resume_claims=resume_claims,
+            position_requirement=position_requirement,
+            position_title=position_title,
         )
         legacy_kwargs = {
             "topic": topic,
@@ -431,9 +462,25 @@ class InterviewAgent:
             result, project, evidence_ids=context.evidence_ids
         )
 
-    def _evaluate(self, *, question, answer, topic, project, evidence, resume_claims=()):
+    def _evaluate(
+        self,
+        *,
+        question,
+        answer,
+        topic,
+        project,
+        evidence,
+        resume_claims=(),
+        position_requirement="",
+        position_title="",
+    ):
         context = self._review_context(
-            project, topic, evidence, resume_claims=resume_claims
+            project,
+            topic,
+            evidence,
+            resume_claims=resume_claims,
+            position_requirement=position_requirement,
+            position_title=position_title,
         )
         legacy_kwargs = {
             "question": question,
@@ -492,6 +539,8 @@ class InterviewAgent:
         evidence=None,
         review_direction="",
         resume_claims=(),
+        position_requirement="",
+        position_title="",
     ) -> ReviewContext:
         facts = tuple(evidence if evidence is not None else topic_evidence(project, topic))
         return ReviewContext(
@@ -499,6 +548,8 @@ class InterviewAgent:
             evidence_ids=tuple(item["id"] for item in facts),
             review_direction=review_direction,
             resume_claims=resume_claims,
+            position_requirement=position_requirement,
+            position_title=position_title,
         )
 
     @staticmethod
@@ -558,6 +609,7 @@ class InterviewAgent:
                 ),
                 covered_points=tuple(result.get("covered_points", ())),
                 missing_points=tuple(result.get("missing_points", ())),
+                analysis=str(result.get("analysis") or ""),
             )
         question = getattr(result, "question", getattr(result, "text", ""))
         result_evidence_ids = tuple(getattr(result, "evidence_ids", ()))

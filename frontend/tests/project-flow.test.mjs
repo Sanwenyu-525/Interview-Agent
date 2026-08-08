@@ -157,6 +157,11 @@ test("answer submission adopts backend state without calculating score or profil
 test("answer submission uses streamed agent feedback and preserves non-perfect reference answers", () => {
   assert.match(app, /submitAnswerStream/);
   assert.match(app, /event === "chunk"/);
+  assert.match(app, /event === "eval_chunk"/);
+  assert.match(app, /setStreamingEval/);
+  assert.match(app, /event === "usage"/);
+  assert.match(app, /setTokenUsage/);
+  assert.match(app, /TokenUsageCircle/);
   assert.match(app, /reference_answer/);
   assert.match(app, /streaming-cursor/);
 });
@@ -183,10 +188,16 @@ test("chat history renders submitted answers in the conversation stream", () => 
   assert.match(app, /record\.answer/);
 });
 
-test("composer exposes busy state and keeps textarea locked while submitting", () => {
+test("composer exposes busy state, keeps textarea editable while submitting, and offers stop", () => {
   assert.match(app, /aria-busy=\{isSubmitting\}/);
   assert.match(app, /disabled=\{disabled \|\| isSubmitting\}/);
+  assert.match(app, /disabled=\{disabled\} \/>/);
   assert.match(app, /正在分析/);
+  assert.match(app, /onStop=\{handleStopAnswer\}/);
+  assert.match(app, /streamAbortRef\.current\?\.abort\(\)/);
+  assert.match(app, /停止回答/);
+  assert.match(app, /new AbortController\(\)/);
+  assert.match(app, /pendingAnswer/);
 });
 
 test("attachment menu closes from Escape and outside pointer interaction", () => {

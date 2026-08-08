@@ -13,7 +13,7 @@ from interview_agent.sqlite_store import (
 )
 from interview_agent.memory.profile_store import SQLiteCandidateProfileStore
 from interview_agent.ingestion import FolderSource, IngestionService, WorkspaceManager
-from interview_agent.models import Evaluation, ProjectKnowledge, Topic
+from interview_agent.models import Evaluation, ProjectKnowledge, QuestionResult, Topic
 from interview_agent.models import SessionConflictError
 from interview_agent.review import ReviewMode
 from interview_agent.service import ProjectAnalysisError
@@ -128,6 +128,46 @@ class SQLitePersistenceTests(unittest.TestCase):
             self.assertEqual(restored.next_direction, "deep")
             self.assertEqual(restored.question_evidence_ids, ("e-tx",))
             self.assertEqual(restored.history[0].evaluation.evidence_ids, ("e-tx",))
+
+    def test_question_and_evaluation_analysis_survive_sqlite_recreation(self):
+        class AnalysisQuestionGenerator:
+            def generate(self, *, topic, project, level, history, **kwargs):
+                return QuestionResult(
+                    question=f"{topic.name} / Level {level} / 订单系统",
+                    analysis=f"出题分析 L{level}",
+                )
+
+        class AnalysisEvaluator:
+            def evaluate(self, *, question, answer, topic, project, **kwargs):
+                return Evaluation(score=70, analysis="评分分析")
+
+        with tempfile.TemporaryDirectory() as directory:
+            database = str(Path(directory) / "analysis-session.db")
+            repository = SQLiteProjectRepository(database)
+            first_service = InterviewService(
+                repository=repository,
+                session_store=SQLiteSessionStore(database),
+                agent=InterviewAgent(
+                    repository=repository,
+                    question_generator=AnalysisQuestionGenerator(),
+                    evaluator=AnalysisEvaluator(),
+                ),
+            )
+            first_service.register_project(PROJECT)
+            session_id, state = first_service.start_session(11)
+            self.assertEqual(state.question_analysis, "出题分析 L1")
+            first_service.submit_answer(session_id, "使用事务保证一致性并支持回滚")
+
+            second_service = InterviewService(
+                repository=SQLiteProjectRepository(database),
+                session_store=SQLiteSessionStore(database),
+            )
+
+            restored = second_service.get_session(session_id)
+
+            self.assertEqual(restored.history[0].analysis, "出题分析 L1")
+            self.assertEqual(restored.history[0].evaluation.analysis, "评分分析")
+            self.assertNotEqual(restored.question_analysis, "出题分析 L1")
 
     def test_portfolio_review_mode_survives_service_recreation(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -16,6 +16,7 @@ import {
   FolderSimple,
   GearSix,
   IdentificationCard,
+  ImageSquare,
   ListBullets,
   MagnifyingGlass,
   Plus,
@@ -44,6 +45,7 @@ import {
   getResume,
   getResumePdf,
   getSessions,
+  ocrPositionJd,
   regeneratePositionQuestions,
   reorderResumes,
   updateResume,
@@ -290,6 +292,60 @@ export function PositionPreparationView({ candidateId = "default", currentProjec
     }
   }
 
+  async function readImageBase64(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result).split(",")[1] || "");
+      reader.onerror = () => reject(reader.error);
+      reader.readAsDataURL(file);
+    });
+  }
+
+  async function runOcr(file) {
+    if (busyAction === "ocr") return;
+    if (!file.type.startsWith("image/")) {
+      setError("OCR 仅支持图片文件。");
+      return;
+    }
+    if (file.size > 10 * 1024 * 1024) {
+      setError("JD 图片不能超过 10MB。");
+      return;
+    }
+    setBusyAction("ocr");
+    setError("");
+    showNotice("正在识别图片中的 JD 文本…");
+    try {
+      const base64 = await readImageBase64(file);
+      const result = await ocrPositionJd(base64, file.type);
+      setDraft((current) => ({
+        ...current,
+        jd_text: result.text,
+        title: current.title || file.name.replace(/\.[^.]+$/, ""),
+      }));
+      showNotice("已从图片识别出 JD 文本，请确认后保存。");
+    } catch (cause) {
+      setError(`图片识别失败：${positionError(cause)}`);
+    } finally {
+      setBusyAction("");
+    }
+  }
+
+  function handleImageFile(event) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    runOcr(file);
+  }
+
+  function handleJdPaste(event) {
+    const files = event.clipboardData?.files;
+    const image = files && files.length > 0 ? files[0] : null;
+    if (image && image.type.startsWith("image/")) {
+      event.preventDefault();
+      runOcr(image);
+    }
+  }
+
   async function handleStatusChange(status) {
     if (!selected) return;
     setBusyAction("status");
@@ -402,7 +458,7 @@ export function PositionPreparationView({ candidateId = "default", currentProjec
           </main>
         </div>
       )}
-      {isCreating && <div className="position-create-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !busyAction) setIsCreating(false); }}><form className="position-create-dialog" onSubmit={handleCreate} aria-label="添加目标岗位"><div className="position-create-heading"><div><span>NEW POSITION</span><h2>添加目标岗位</h2><p>粘贴 JD 或导入 UTF-8 文本文件。</p></div><button type="button" aria-label="关闭" onClick={() => setIsCreating(false)} disabled={Boolean(busyAction)}><X size={18} /></button></div><div className="position-form-grid"><label><span>岗位名称 *</span><input value={draft.title} onChange={(event) => setDraft((current) => ({ ...current, title: event.target.value }))} required maxLength={120} placeholder="例如：Java 后端工程师" /></label><label><span>公司</span><input value={draft.company} onChange={(event) => setDraft((current) => ({ ...current, company: event.target.value }))} maxLength={120} placeholder="公司或团队名称" /></label><label><span>来源链接</span><input type="url" value={draft.source_url} onChange={(event) => setDraft((current) => ({ ...current, source_url: event.target.value }))} maxLength={2000} placeholder="https://…" /></label><label><span>关联项目 ID</span><input value={draft.project_ids} onChange={(event) => setDraft((current) => ({ ...current, project_ids: event.target.value }))} placeholder="多个 ID 用逗号分隔" /></label></div><label className="position-jd-field"><span>JD 原文 *</span><textarea value={draft.jd_text} onChange={(event) => setDraft((current) => ({ ...current, jd_text: event.target.value }))} required maxLength={100000} placeholder="粘贴岗位职责、任职要求和加分项…" /><label className="position-file-import"><UploadSimple size={15} /><span>导入 .txt / .md / .json</span><input type="file" accept=".txt,.md,.json,text/plain,text/markdown,application/json" onChange={handleTextFile} /></label></label><div className="position-create-footer"><small>图片和 PDF OCR 暂不支持；保存后会自动提取要求并生成题目。</small><span><button type="button" onClick={() => setIsCreating(false)} disabled={Boolean(busyAction)}>取消</button><button type="submit" disabled={Boolean(busyAction)}>{busyAction === "create" ? "正在生成…" : "保存并生成题目"}<ArrowRight size={15} /></button></span></div></form></div>}
+      {isCreating && <div className="position-create-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !busyAction) setIsCreating(false); }}><form className="position-create-dialog" onSubmit={handleCreate} aria-label="添加目标岗位"><div className="position-create-heading"><div><span>NEW POSITION</span><h2>添加目标岗位</h2><p>粘贴 JD 或导入 UTF-8 文本文件。</p></div><button type="button" aria-label="关闭" onClick={() => setIsCreating(false)} disabled={Boolean(busyAction)}><X size={18} /></button></div><div className="position-form-grid"><label><span>岗位名称 *</span><input value={draft.title} onChange={(event) => setDraft((current) => ({ ...current, title: event.target.value }))} required maxLength={120} placeholder="例如：Java 后端工程师" /></label><label><span>公司</span><input value={draft.company} onChange={(event) => setDraft((current) => ({ ...current, company: event.target.value }))} maxLength={120} placeholder="公司或团队名称" /></label><label><span>来源链接</span><input type="url" value={draft.source_url} onChange={(event) => setDraft((current) => ({ ...current, source_url: event.target.value }))} maxLength={2000} placeholder="https://…" /></label><label><span>关联项目 ID</span><input value={draft.project_ids} onChange={(event) => setDraft((current) => ({ ...current, project_ids: event.target.value }))} placeholder="多个 ID 用逗号分隔" /></label></div><label className="position-jd-field"><span>JD 原文 *</span><textarea value={draft.jd_text} onChange={(event) => setDraft((current) => ({ ...current, jd_text: event.target.value }))} onPaste={handleJdPaste} required maxLength={100000} placeholder="粘贴岗位职责、任职要求和加分项…，或直接粘贴 JD 截图" /><label className="position-file-import"><UploadSimple size={15} /><span>导入 .txt / .md / .json</span><input type="file" accept=".txt,.md,.json,text/plain,text/markdown,application/json" onChange={handleTextFile} /></label><label className="position-file-import"><ImageSquare size={15} /><span>{busyAction === "ocr" ? "识别中…" : "导入 JD 截图"}</span><input type="file" accept="image/*" onChange={handleImageFile} disabled={busyAction === "ocr"} /></label></label><div className="position-create-footer"><small>图片和 PDF OCR 需在应用设置中配置大模型（视觉模型）；保存后会自动提取要求并生成题目。</small><span><button type="button" onClick={() => setIsCreating(false)} disabled={Boolean(busyAction)}>取消</button><button type="submit" disabled={Boolean(busyAction)}>{busyAction === "create" ? "正在生成…" : "保存并生成题目"}<ArrowRight size={15} /></button></span></div></form></div>}
     </section>
   );
 }

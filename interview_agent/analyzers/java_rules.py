@@ -154,7 +154,12 @@ def parse_java_project(root: Path, build_file: str | Path | None = None) -> Java
                         kind=kind,
                         source_path=source_path,
                         line=annotation_line + 1,
-                        excerpt=original_lines[annotation_line].strip(),
+                        excerpt="\n".join(
+                            line.strip()
+                            for line in original_lines[
+                                annotation_line : declaration_line + 1
+                            ]
+                        ),
                     )
                 )
 

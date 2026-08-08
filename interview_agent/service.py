@@ -27,7 +27,14 @@ from .ingestion import (
     ZipSource,
 )
 from .ingestion.security import normalize_project_id
-from .llm import LLMConfig, OpenAICompatibleClient, agent_from_config
+from .llm import (
+    LLMConfig,
+    LLMError,
+    LlmPositionQuestionGenerator,
+    OpenAICompatibleClient,
+    agent_from_config,
+    ocr_jd_text,
+)
 from .models import (
     AnalysisStatus,
     InterviewState,
@@ -223,12 +230,14 @@ class InterviewService:
         resume_store=None,
         llm_settings_store=None,
         llm_config: LLMConfig | None = None,
+        llm_client: OpenAICompatibleClient | None = None,
         workflow_factory=InterviewGraph,
         workflow_checkpointer=None,
     ):
         self.repository = repository or InMemoryProjectRepository()
         self.llm_settings_store = llm_settings_store or InMemoryLLMSettingsStore()
         self.llm_config = llm_config or self.llm_settings_store.get()
+        self._llm_client = llm_client
         self.agent = agent or agent_from_config(self.repository, self.llm_config)
         self.workflow_factory = workflow_factory
         self.workflow_checkpointer = workflow_checkpointer
@@ -250,7 +259,10 @@ class InterviewService:
         if hasattr(agent, "profile"):
             agent.profile = profile
         if review_mode is not ReviewMode.TECHNICAL_INTERVIEW:
-            agent.policy = policy_for_mode(review_mode)
+            builder = getattr(agent, "policy_builder", None)
+            agent.policy = (
+                builder(review_mode) if callable(builder) else policy_for_mode(review_mode)
+            )
         return agent
 
     def _workflow_for_agent(self, agent):
@@ -272,6 +284,10 @@ class InterviewService:
         }
 
     def _switch_llm_runtime(self, config: LLMConfig) -> None:
+        if config.enabled and self._llm_client is None:
+            self._llm_client = OpenAICompatibleClient(config)
+        if not config.enabled:
+            self._llm_client = None
         self.agent = agent_from_config(self.repository, config)
         self.llm_config = config
 
@@ -422,6 +438,55 @@ class InterviewService:
                 raise ProjectNotFoundError(f"项目不存在: {project_id}") from exc
         return tuple(projects)
 
+    def _position_questions(
+        self,
+        position_id: str,
+        requirements: tuple[str, ...],
+        projects: tuple[ProjectKnowledge, ...],
+    ) -> tuple:
+        """LLM 优先生成岗位题库；未配置 LLM 或生成失败时回退本地规则。"""
+        client = self._llm_client
+        if client is not None:
+            try:
+                generated = LlmPositionQuestionGenerator(client).generate(
+                    position_id=position_id,
+                    requirements=requirements,
+                    projects=projects,
+                )
+            except LLMError:
+                generated = ()
+            if generated:
+                return generated
+        return generate_questions(position_id, requirements, projects)
+
+    def ocr_position_jd(self, payload: dict) -> dict:
+        if not isinstance(payload, dict):
+            raise TypeError("OCR 请求必须是 JSON 对象")
+        raw_base64 = str(payload.get("image_base64") or "").strip()
+        if not raw_base64:
+            raise ValueError("image_base64 不能为空")
+        mime_type = str(payload.get("mime_type") or "image/png").strip()
+        if not mime_type.startswith("image/"):
+            raise ValueError("mime_type 必须是 image/* 类型")
+        if self._llm_client is None:
+            raise ValueError("未配置大模型，无法识别图片 JD；请先在应用设置中配置并启用大模型")
+        try:
+            image_bytes = base64.b64decode(raw_base64, validate=True)
+        except (binascii.Error, ValueError) as exc:
+            raise ValueError("image_base64 不是合法的 Base64 编码") from exc
+        if not image_bytes:
+            raise ValueError("图片内容为空")
+        if len(image_bytes) > 10 * 1024 * 1024:
+            raise ValueError("图片不能超过 10MB")
+        try:
+            text = ocr_jd_text(self._llm_client, raw_base64, mime_type)
+        except LLMError as exc:
+            raise LLMError(f"图片 JD 识别失败：{exc}") from exc
+        text = text.strip()
+        if not text:
+            raise ValueError("未能从图片中识别出 JD 文本，请尝试更清晰的截图")
+        return {"text": text, "chars": len(text)}
+
     def create_position(self, payload: dict) -> TargetPosition:
         if not isinstance(payload, dict):
             raise TypeError("岗位必须是 JSON 对象")
@@ -443,6 +508,10 @@ class InterviewService:
             project_ids=project_ids,
             projects=projects,
         )
+        questions = self._position_questions(
+            position.position_id, position.requirements, projects
+        )
+        position = replace(position, questions=questions)
         self.position_store.save(position)
         return position
 
@@ -477,7 +546,9 @@ class InterviewService:
             validated = replace(
                 validated,
                 requirements=requirements,
-                questions=generate_questions(validated.position_id, requirements, projects),
+                questions=self._position_questions(
+                    validated.position_id, requirements, projects
+                ),
             )
         self.position_store.save(validated)
         return validated
@@ -489,7 +560,9 @@ class InterviewService:
         updated = replace(
             current,
             requirements=requirements,
-            questions=generate_questions(current.position_id, requirements, projects),
+            questions=self._position_questions(
+                current.position_id, requirements, projects
+            ),
             updated_at=updated_at(),
         )
         self.position_store.save(updated)
@@ -1045,6 +1118,10 @@ class InterviewService:
             resume_claims=resume_claims,
             position_id=requested_position_id,
             position_question_id=requested_question_id,
+            position_requirement=(
+                position_question.requirement if position_question else ""
+            ),
+            position_title=position.title if position else "",
         )
         self._save_session(session_id, state, expected_version=0)
         return session_id, state
@@ -1111,6 +1188,7 @@ class InterviewService:
                     "completed_at": state.completed_at,
                     "position_id": state.position_id,
                     "position_question_id": state.position_question_id,
+                    "position_requirement": state.position_requirement,
                 }
             )
         return {"sessions": summaries, "count": len(summaries)}
