@@ -150,6 +150,12 @@ test("P2 profile visualization only enables a radar summary with reliable dimens
   assert.match(css, /\.profile-radar-summary\s+li/);
 });
 
+test("settings remains readable as a single column on narrow screens", () => {
+  assert.match(css, /@media \(max-width: 920px\) \{[\s\S]*\.stitch-settings-workspace \{[\s\S]*overflow: auto;/);
+  assert.match(css, /\.stitch-settings-workspace \.settings-view \{[\s\S]*display: block;[\s\S]*overflow: visible;/);
+  assert.match(css, /\.stitch-settings-workspace \.llm-settings-card,[\s\S]*\.stitch-settings-workspace \.agent-settings-card \{[\s\S]*display: block;/);
+});
+
 test("desktop layout uses the center workspace as the primary scroll container", () => {
   assert.match(app, /<PrimarySidebar/);
   assert.match(css, /\.stitch-primary-sidebar\s*\{[^}]*grid-column:\s*1;/s);
