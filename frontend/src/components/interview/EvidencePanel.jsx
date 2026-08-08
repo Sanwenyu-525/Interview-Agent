@@ -1,0 +1,13 @@
+import { ArrowRight, CaretLeft, CaretRight, DotsThree, FileCode, X } from "@phosphor-icons/react";
+import { EvaluationSummary } from "./EvaluationSummary";
+
+export function EvidencePanel({ session, evaluation, tokenUsage, isEvidenceOpen, isEvidenceCollapsed, isRubricOpen, onExpand, onCollapse, onClose, onOpenProjectKnowledge, onToggleRubric, onCloseRubric, directionLabel, confidenceLabel }) {
+  return (
+    <aside id="evidence-drawer" className={`evidence-panel ${isEvidenceOpen ? "is-open" : ""} ${isEvidenceCollapsed ? "is-collapsed" : ""}`} aria-label="项目证据和当前评估">
+      <button className="evidence-expand-button" type="button" aria-label="展开证据面板" onClick={onExpand}><CaretLeft size={17} /><span className="evidence-label"><b>证</b><b>据</b></span></button>
+      <div className="panel-header"><h2>证据 <span>（{session.evidenceIds.length}）</span></h2><div className="panel-header-actions">{confidenceLabel(session.evidence.confidence) && <span className="confidence-badge">置信度 {confidenceLabel(session.evidence.confidence)}</span>}<button className="text-button" type="button" onClick={onOpenProjectKnowledge}>查看全部 <ArrowRight size={15} /></button><button className="icon-button evidence-collapse-button" type="button" aria-label="收起证据面板" onClick={onCollapse}><CaretRight size={18} /></button><button className="icon-button evidence-close-button" type="button" aria-label="关闭证据面板" onClick={onClose}><X size={18} /></button></div></div>
+      <section className="evidence-card">{session.evidence.available ? <><div className="card-kicker"><FileCode size={18} weight="duotone" /> 代码证据</div><div className="file-heading"><strong>{session.evidence.file || "未命名证据"}</strong><span>{session.evidence.language || "未知语言"}</span></div>{session.evidence.lines.length > 0 ? <div className="code-block">{session.evidence.lines.map((line, index) => <div className={line.includes("//") ? "code-line comment" : "code-line"} key={`${line}-${index}`}><span>{String(session.evidence.lineStart + index).padStart(2, "0")}</span><code>{line}</code></div>)}</div> : <div className="empty-state">证据没有可展示的代码片段</div>}<p>{session.evidence.explanation || "暂无证据解释"}</p><div className="source-row"><span>来源：API evidence id {session.evidenceIds[0] || "—"}</span><DotsThree size={19} /></div></> : <div className="empty-state"><FileCode size={22} /> 暂无证据</div>}</section>
+      <EvaluationSummary evaluation={evaluation} tokenUsage={tokenUsage} nextDirection={session.nextDirection} capabilityHints={session.capabilityHints} isRubricOpen={isRubricOpen} onToggleRubric={onToggleRubric} onCloseRubric={onCloseRubric} onOpenProjectKnowledge={onOpenProjectKnowledge} directionLabel={directionLabel} />
+    </aside>
+  );
+}

@@ -8,13 +8,18 @@ const primitives = await readFile(new URL("../src/styles/primitives.css", import
 const main = await readFile(new URL("../src/main.jsx", import.meta.url), "utf8");
 const app = await readFile(new URL("../src/App.jsx", import.meta.url), "utf8");
 const pages = await readFile(new URL("../src/StitchPages.jsx", import.meta.url), "utf8");
+const interviewComposer = await readFile(new URL("../src/components/interview/InterviewComposer.jsx", import.meta.url), "utf8");
+const interviewThread = await readFile(new URL("../src/components/interview/InterviewThread.jsx", import.meta.url), "utf8");
+const evidencePanel = await readFile(new URL("../src/components/interview/EvidencePanel.jsx", import.meta.url), "utf8");
+const evaluationSummary = await readFile(new URL("../src/components/interview/EvaluationSummary.jsx", import.meta.url), "utf8");
 const tauriConfig = JSON.parse(await readFile(new URL("../src-tauri/tauri.conf.json", import.meta.url), "utf8"));
 
 test("desktop interview keeps a readable evidence-first desktop layout", () => {
   assert.match(app, /className=\{`app-shell stitch-shell view-\$\{activeView\}/);
   assert.match(app, /<PrimarySidebar/);
   assert.match(app, /<InterviewContextRail/);
-  assert.match(app, /className=\{`evidence-panel \$\{isEvidenceOpen \? "is-open" : ""\} \$\{isEvidenceCollapsed \? "is-collapsed" : ""\}`\}/);
+  assert.match(app, /<EvidencePanel/);
+  assert.match(evidencePanel, /className=\{`evidence-panel \$\{isEvidenceOpen \? "is-open" : ""\} \$\{isEvidenceCollapsed \? "is-collapsed" : ""\}`\}/);
   assert.match(css, /grid-template-columns:\s*176px var\(--context-rail-width, 216px\) minmax\(600px, 1fr\) minmax\(320px, var\(--evidence-panel-width, 372px\)\);/);
   assert.match(css, /\.view-interview \.evidence-panel\s*\{[^}]*grid-column:\s*4;/s);
 });
@@ -32,9 +37,10 @@ test("responsive interview turns navigation and evidence into accessible drawers
 });
 
 test("interview focus hierarchy keeps current question open and history collapsed", () => {
-  assert.match(app, /className="agent-message agent-message-agent current-question-message"/);
-  assert.match(app, /className="message-bubble current-question-bubble"/);
-  assert.match(app, /className="history-pair history-collapsed"/);
+  assert.match(app, /<InterviewThread/);
+  assert.match(interviewThread, /className="agent-message agent-message-agent current-question-message"/);
+  assert.match(interviewThread, /className="message-bubble current-question-bubble"/);
+  assert.match(interviewThread, /className="history-pair history-collapsed"/);
   assert.match(app, /const questionProgressLabel/);
   assert.match(css, /\.view-interview \.current-question-bubble\s*\{/);
   assert.match(css, /\.view-interview \.history-collapsed\s*\{/);
@@ -127,13 +133,14 @@ test("interview composer uses a compact borderless submit footer", () => {
   assert.match(css, /\.view-interview \.composer-submit\s*\{[^}]*min-width:\s*112px;[^}]*min-height:\s*32px;/s);
   assert.match(css, /\.chat-composer textarea\s*\{[^}]*resize:\s*none;/s);
   assert.doesNotMatch(css, /\.composer-tool-button/);
-  assert.match(app, /<ArrowUp size=\{18\} weight="bold" \/>/);
+  assert.match(interviewComposer, /<ArrowUp size=\{18\} weight="bold" \/>/);
 });
 
 test("interview feedback keeps process and evaluation hierarchy compact", () => {
   assert.match(css, /\.process-details\s*\{/);
   assert.match(css, /\.history-evaluation\s*\{/);
   assert.match(css, /\.streaming-message\s+\.process-details/);
+  assert.match(evaluationSummary, /className="evaluation-section"/);
 });
 
 test("project intelligence view traces universal model facts to evidence", () => {
@@ -150,8 +157,18 @@ test("project intelligence view traces universal model facts to evidence", () =>
 });
 
 test("interview evidence exposes source confidence", () => {
-  assert.match(app, /className="confidence-badge"/);
+  assert.match(evidencePanel, /className="confidence-badge"/);
   assert.match(css, /\.confidence-badge\s*\{/);
+});
+
+test("interview workbench keeps stateful orchestration in App and view boundaries separate", () => {
+  assert.match(app, /submitAnswerStream/);
+  assert.match(app, /<InterviewComposer/);
+  assert.match(app, /<InterviewThread/);
+  assert.match(app, /<EvidencePanel/);
+  assert.doesNotMatch(interviewComposer, /submitAnswerStream|fetch\(/);
+  assert.doesNotMatch(interviewThread, /submitAnswerStream|fetch\(/);
+  assert.doesNotMatch(evidencePanel, /submitAnswerStream|fetch\(/);
 });
 
 test("desktop app uses a custom draggable titlebar with window controls", () => {

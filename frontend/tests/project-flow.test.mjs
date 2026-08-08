@@ -5,6 +5,10 @@ import test from "node:test";
 const app = await readFile(new URL("../src/App.jsx", import.meta.url), "utf8");
 const pages = await readFile(new URL("../src/StitchPages.jsx", import.meta.url), "utf8");
 const upload = await readFile(new URL("../src/upload.js", import.meta.url), "utf8");
+const composer = await readFile(new URL("../src/components/interview/InterviewComposer.jsx", import.meta.url), "utf8");
+const thread = await readFile(new URL("../src/components/interview/InterviewThread.jsx", import.meta.url), "utf8");
+const evidencePanelFile = await readFile(new URL("../src/components/interview/EvidencePanel.jsx", import.meta.url), "utf8");
+const evaluationSummary = await readFile(new URL("../src/components/interview/EvaluationSummary.jsx", import.meta.url), "utf8");
 
 test("startup loads status and knowledge before creating a session", () => {
   assert.match(app, /getProjectStatus/);
@@ -29,7 +33,8 @@ test("missing project keeps the Agent chat shell instead of rendering a standalo
   assert.match(app, /setSession\(toUiSession\("", \{\}, \{\}/);
   assert.match(app, /needsUpload \?[\s\S]*EmptyInterviewView/);
   assert.match(app, /function EmptyInterviewView[\s\S]*agent-message/);
-  assert.match(app, /function EmptyInterviewView[\s\S]*chat-composer/);
+  assert.match(app, /function EmptyInterviewView[\s\S]*<InterviewComposer/);
+  assert.match(composer, /chat-composer/);
   assert.doesNotMatch(app, /function EmptyInterviewView[\s\S]*status-card upload-card/);
 });
 
@@ -141,8 +146,8 @@ test("session UI mapping uses project state and evidence ids", () => {
 
 test("empty knowledge, evidence, and evaluation states are explicit", () => {
   assert.match(pages, /暂无项目知识/);
-  assert.match(app, /暂无证据/);
-  assert.match(app, /暂无评价/);
+  assert.match(evidencePanelFile, /暂无证据/);
+  assert.match(evaluationSummary, /暂无评价/);
   assert.match(app, /bootError/);
 });
 
@@ -180,41 +185,41 @@ test("answer submission uses streamed agent feedback and preserves non-perfect r
   assert.match(app, /setStreamingEval/);
   assert.match(app, /event === "usage"/);
   assert.match(app, /setTokenUsage/);
-  assert.match(app, /TokenUsageCircle/);
-  assert.match(app, /reference_answer/);
-  assert.match(app, /streaming-cursor/);
+  assert.match(thread, /TokenUsageCircle/);
+  assert.match(thread, /reference_answer/);
+  assert.match(thread, /streaming-cursor/);
 });
 
 test("answer feedback exposes a collapsible safe process summary and completed evaluation", () => {
-  assert.match(app, /streamingSteps/);
-  assert.match(app, /className="process-details"/);
-  assert.match(app, /处理过程/);
-  assert.match(app, /className="history-evaluation"/);
-  assert.match(app, /record\.evaluation\.feedback/);
+  assert.match(thread, /streamingSteps/);
+  assert.match(thread, /className="process-details"/);
+  assert.match(thread, /处理过程/);
+  assert.match(thread, /className="history-evaluation"/);
+  assert.match(thread, /record\.evaluation\.feedback/);
 });
 
 test("composer does not expose an unused Markdown toolbar", () => {
-  assert.doesNotMatch(app, /insertMarkdown/);
-  assert.doesNotMatch(app, /handleToolbarAction/);
-  assert.doesNotMatch(app, /markdown-label/);
-  assert.doesNotMatch(app, /aria-label="加粗"/);
-  assert.doesNotMatch(app, /aria-label="代码"/);
+  assert.doesNotMatch(composer, /insertMarkdown/);
+  assert.doesNotMatch(composer, /handleToolbarAction/);
+  assert.doesNotMatch(composer, /markdown-label/);
+  assert.doesNotMatch(composer, /aria-label="加粗"/);
+  assert.doesNotMatch(composer, /aria-label="代码"/);
 });
 
 test("chat history renders submitted answers in the conversation stream", () => {
-  assert.match(app, /history\.map\(/);
-  assert.match(app, /agent-message-user/);
-  assert.match(app, /record\.answer/);
+  assert.match(thread, /history\.map\(/);
+  assert.match(thread, /agent-message-user/);
+  assert.match(thread, /record\.answer/);
 });
 
 test("composer exposes busy state, keeps textarea editable while submitting, and offers stop", () => {
-  assert.match(app, /aria-busy=\{isSubmitting\}/);
-  assert.match(app, /disabled=\{disabled \|\| isSubmitting\}/);
-  assert.match(app, /disabled=\{disabled\} \/>/);
-  assert.match(app, /正在分析/);
+  assert.match(composer, /aria-busy=\{isSubmitting\}/);
+  assert.match(composer, /disabled=\{disabled \|\| isSubmitting\}/);
+  assert.match(composer, /disabled=\{disabled\}/);
+  assert.match(composer, /正在分析/);
   assert.match(app, /onStop=\{handleStopAnswer\}/);
   assert.match(app, /streamAbortRef\.current\?\.abort\(\)/);
-  assert.match(app, /停止回答/);
+  assert.match(composer, /停止回答/);
   assert.match(app, /new AbortController\(\)/);
   assert.match(app, /pendingAnswer/);
 });
@@ -259,15 +264,15 @@ test("interview structure stays coarse and excludes project components", () => {
 });
 
 test("evidence actions are bound and the evaluation rubric is collapsible", () => {
-  const evidencePanel = app.slice(app.indexOf('id="evidence-drawer"'));
-  assert.match(evidencePanel, /<button className="text-button" type="button" onClick=\{handleOpenProjectKnowledge\}>查看全部/);
-  assert.match(evidencePanel, /aria-controls="evaluation-rubric"/);
-  assert.match(evidencePanel, /onClick=\{\(\) => setIsRubricOpen\(\(open\) => !open\)\}/);
-  assert.match(evidencePanel, /<button className="quiet-button" type="button" onClick=\{handleOpenProjectKnowledge\}>[\s\S]*查看项目知识/);
-  assert.match(evidencePanel, /id="evaluation-rubric"/);
-  assert.match(evidencePanel, /关闭评分标准/);
-  assert.match(evidencePanel, /收起证据面板/);
-  assert.match(evidencePanel, /展开证据面板/);
+  const evidenceSource = `${evidencePanelFile}\n${evaluationSummary}`;
+  assert.match(evidenceSource, /<button className="text-button" type="button" onClick=\{onOpenProjectKnowledge\}>查看全部/);
+  assert.match(evidenceSource, /aria-controls="evaluation-rubric"/);
+  assert.match(evidenceSource, /onToggleRubric/);
+  assert.match(evidenceSource, /<button className="quiet-button" type="button" onClick=\{onOpenProjectKnowledge\}>[\s\S]*查看项目知识/);
+  assert.match(evidenceSource, /id="evaluation-rubric"/);
+  assert.match(evidenceSource, /关闭评分标准/);
+  assert.match(evidenceSource, /收起证据面板/);
+  assert.match(evidenceSource, /展开证据面板/);
 });
 
 test("project upload exposes phase-based progress feedback while waiting", () => {
