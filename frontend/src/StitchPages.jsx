@@ -158,6 +158,47 @@ function trendLabel(value) {
   }[value] || "趋势未定";
 }
 
+function radarPoint(index, total, radius, value = 1) {
+  const angle = -Math.PI / 2 + (index / total) * Math.PI * 2;
+  return {
+    x: 120 + Math.cos(angle) * radius * value,
+    y: 120 + Math.sin(angle) * radius * value,
+  };
+}
+
+function radarPoints(items, radius, valueFor) {
+  return items.map(([, skill], index) => {
+    const value = Math.max(0, Math.min(100, Number(valueFor(skill)) || 0)) / 100;
+    const point = radarPoint(index, items.length, radius, value);
+    return `${point.x},${point.y}`;
+  }).join(" ");
+}
+
+function CapabilityRadar({ skills }) {
+  const axes = skills.slice(0, 6);
+  const gridLevels = [0.25, 0.5, 0.75, 1];
+  return (
+    <div className="profile-radar">
+      <svg viewBox="0 0 240 240" role="img" aria-labelledby="capability-radar-title">
+        <title id="capability-radar-title">稳定能力维度雷达摘要</title>
+        {gridLevels.map((level) => <polygon className="profile-radar-grid" points={radarPoints(axes, 82 * level, () => 100)} key={level} />)}
+        {axes.map(([name], index) => {
+          const point = radarPoint(index, axes.length, 82);
+          return <line className="profile-radar-axis" x1="120" y1="120" x2={point.x} y2={point.y} key={name} />;
+        })}
+        <polygon className="profile-radar-area" points={radarPoints(axes, 82, (skill) => skill.score)} />
+        {axes.map(([name, skill], index) => {
+          const point = radarPoint(index, axes.length, 92);
+          return <text className="profile-radar-label" x={point.x} y={point.y} textAnchor="middle" key={name}>{name}</text>;
+        })}
+      </svg>
+      <ul className="profile-radar-summary">
+        {axes.map(([name, skill]) => <li key={name}><span>{name}</span><strong>{skill.score}</strong><small>{skill.sample_count} 个样本 · {trendLabel(skill.trend)}</small></li>)}
+      </ul>
+    </div>
+  );
+}
+
 export function PrimarySidebar({ activeView, onNavigate, onNewSession, hasProject, isOpen = false, onClose = () => {} }) {
   const nav = [
     ["interview", "面试工作台", ListBullets],
@@ -1787,6 +1828,8 @@ export function CandidateProfileView({ profile, loading, error, onRetry, onPract
   const skills = Object.entries(profile?.skills || {});
   if (skills.length === 0) return <PageState title="能力画像还没有样本" detail="完成一次回答后，后端会按主题保存分数、趋势、样本数和薄弱项。" action="开始练习" onAction={onPractice} />;
   const totalSamples = skills.reduce((sum, [, item]) => sum + item.sample_count, 0);
+  const stableSkills = skills.filter(([, item]) => item.sample_count >= 3 && item.trend !== "new");
+  const canShowRadar = stableSkills.length >= 5;
   const weaknesses = skills.flatMap(([topic, item]) => {
     const sources = new Map((item.weakness_sources || []).map((source) => [source.weakness, source]));
     return item.weaknesses.map((text) => ({ topic, text, source: sources.get(text) }));
@@ -1819,6 +1862,7 @@ export function CandidateProfileView({ profile, loading, error, onRetry, onPract
           <section className="profile-history-note"><ClockCounterClockwise size={18} /><div><strong>画像持续更新</strong><p>每次提交回答后，面试者的主题分数、最近表现、趋势和薄弱项都会由后端事务更新。</p></div></section>
         </main>
         <aside className="profile-aside">
+          {canShowRadar && <section className="profile-radar-panel"><div className="report-section-heading"><strong>稳定能力分布</strong><span>满足 5 个维度</span></div><CapabilityRadar skills={stableSkills} /><p className="profile-trend-note">雷达图只摘要稳定维度；详细分数、样本数与证据仍以能力矩阵为准。</p></section>}
           <section><div className="report-section-heading"><strong>能力趋势</strong><TrendUp size={16} /></div><div className="profile-bars">{skills.slice(0, 7).map(([name, skill]) => skill.score > 0 ? <span title={`${name} ${skill.score}`} style={{ height: `${skill.score}%` }} key={name} /> : <span className="profile-bar-empty" title={`${name}：尚未形成有效趋势`} key={name}>—</span>)}</div><p className="profile-trend-note">零分维度不绘制趋势柱，避免制造虚假精度。</p></section>
           <section><div className="report-section-heading"><strong>重点薄弱点</strong><span>优先 {Math.min(3, weaknesses.length)} / {weaknesses.length}</span></div>{weaknesses.length ? weaknesses.slice(0, 3).map((item) => <article key={`${item.topic}-${item.text}`}><strong>{item.topic}</strong><p>{item.text}</p>{item.source ? <button className="profile-source-link" type="button" title={`会话 ${item.source.session_id}`} onClick={() => onOpenSource?.(item.source)}><ClockCounterClockwise size={13} />第 {item.source.record_index + 1} 题 · {item.source.evidence_ids.length} 条证据<ArrowRight size={12} /></button> : <small className="profile-source-empty">历史画像暂无可追溯来源</small>}</article>) : <p className="profile-empty-copy">暂无明确薄弱项。</p>}</section>
           <button type="button" onClick={onPractice}><Target size={16} /> 创建针对性练习</button>

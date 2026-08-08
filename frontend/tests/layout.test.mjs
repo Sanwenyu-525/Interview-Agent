@@ -140,6 +140,16 @@ test("P2 theme uses semantic dark tokens and a persisted system preference", () 
   assert.match(css, /--code-surface/);
 });
 
+test("P2 profile visualization only enables a radar summary with reliable dimensions", () => {
+  assert.match(pages, /function CapabilityRadar/);
+  assert.match(pages, /item\.sample_count >= 3 && item\.trend !== "new"/);
+  assert.match(pages, /const canShowRadar = stableSkills\.length >= 5/);
+  assert.match(pages, /稳定能力分布/);
+  assert.match(pages, /详细分数、样本数与证据仍以能力矩阵为准/);
+  assert.match(css, /\.profile-radar\s*\{/);
+  assert.match(css, /\.profile-radar-summary\s+li/);
+});
+
 test("desktop layout uses the center workspace as the primary scroll container", () => {
   assert.match(app, /<PrimarySidebar/);
   assert.match(css, /\.stitch-primary-sidebar\s*\{[^}]*grid-column:\s*1;/s);

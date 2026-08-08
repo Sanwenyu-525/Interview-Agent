@@ -57,7 +57,7 @@ The default preference follows the operating-system color scheme. A manual choic
 - **Evidence:** File path and language in the header; code excerpt with DM Mono line numbers; evidence ID, confidence, and source explanation remain visible. Clicking a reference should highlight the matching structure node.
 - **Evaluation:** Score, direction, strengths, weaknesses, and next action must be separate semantic groups. Never communicate score quality by color alone.
 - **Tables and lists:** Compact 40–48px rows, sticky headings where useful, no zebra striping. Selection uses Copper Wash.
-- **Charts:** Sparse axes, direct labels, real uneven values, and accessible text summaries. Avoid decorative donut charts.
+- **Charts:** Sparse axes, direct labels, real uneven values, and accessible text summaries. Keep horizontal capability bars as the default. Show a radar summary only with at least five dimensions having three or more samples and a non-new trend; otherwise explain the missing trend in text. Avoid decorative donut charts.
 - **Loading:** Exact-dimension skeletons and named progress stages: 读取文件、上传项目、分析项目、建立会话. Do not use generic circular spinners as the only feedback.
 - **Empty states:** Preserve the full workspace shell and explain the next action. Never replace the product with a standalone upload landing page.
 - **Errors:** Keep user input and project context visible. State what failed and provide a specific recovery action.
