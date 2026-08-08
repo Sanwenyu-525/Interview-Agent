@@ -6,6 +6,7 @@ import {
   Briefcase,
   CaretDown,
   CaretRight,
+  CaretUp,
   ChartBar,
   Check,
   CheckCircle,
@@ -619,6 +620,15 @@ export function ResumeUploadDialog({ open, onClose, onCreated }) {
     setClaimSkips({});
   }, [open]);
 
+  useEffect(() => {
+    if (!open) return undefined;
+    function handleKeyDown(event) {
+      if (event.key === "Escape" && !uploading) onClose();
+    }
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [open, uploading, onClose]);
+
   if (!open) return null;
 
   async function readPdfBase64(file) {
@@ -772,6 +782,15 @@ export function ResumeEditDialog({ resume, onClose, onSaved }) {
     setError("");
   }, [resume]);
 
+  useEffect(() => {
+    if (!resume) return undefined;
+    function handleKeyDown(event) {
+      if (event.key === "Escape" && !saving) onClose();
+    }
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [resume, saving, onClose]);
+
   if (!resume) return null;
 
   async function readPdfBase64(file) {
@@ -891,6 +910,15 @@ export function SessionSetupView({ session, candidateId, isCreating, error, onCr
     loadResumes();
     return () => { isMounted.current = false; };
   }, []);
+
+  useEffect(() => {
+    if (!isResumePickerOpen) return undefined;
+    function handleKeyDown(event) {
+      if (event.key === "Escape") setIsResumePickerOpen(false);
+    }
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [isResumePickerOpen]);
 
   function openResumePicker() {
     setPickerQuery("");
@@ -1160,6 +1188,24 @@ export function ResumeLibraryView() {
     }
   }
 
+  async function moveItem(index, direction) {
+    const targetIndex = index + direction;
+    if (targetIndex < 0 || targetIndex >= resumes.length) return;
+    const previous = resumes;
+    const next = [...resumes];
+    const [moved] = next.splice(index, 1);
+    next.splice(targetIndex, 0, moved);
+    setResumes(next);
+    showNotice("");
+    try {
+      await reorderResumes(next.map((item) => item.id));
+      showNotice("简历顺序已保存。");
+    } catch (cause) {
+      setResumes(previous);
+      setError(cause?.details?.error || cause?.message || "保存简历顺序失败");
+    }
+  }
+
   async function handleDeleteItem(item) {
     if (!globalThis.confirm?.(`确定删除简历“${item.name}”吗？此操作无法撤销。`)) return;
     setError("");
@@ -1218,6 +1264,10 @@ export function ResumeLibraryView() {
                   </span>
                 </button>
                 <span className="resume-list-actions">
+                  {!query && <>
+                    <button className="resume-move-button" type="button" aria-label={`上移 ${resume.name}`} title="键盘排序：上移 (Alt+↑)" onClick={() => moveItem(index, -1)} disabled={index === 0}><CaretUp size={13} /></button>
+                    <button className="resume-move-button" type="button" aria-label={`下移 ${resume.name}`} title="键盘排序：下移 (Alt+↓)" onClick={() => moveItem(index, 1)} disabled={index === resumes.length - 1}><CaretDown size={13} /></button>
+                  </>}
                   <button type="button" aria-label={`编辑 ${resume.name}`} title="编辑简历" onClick={() => setEditingResume(resume)}><PencilSimple size={13} /></button>
                   <button type="button" aria-label={`删除 ${resume.name}`} title="删除简历" onClick={() => handleDeleteItem(resume)}><Trash size={13} /></button>
                 </span>
@@ -1450,8 +1500,8 @@ export function SessionReportView({ report, loading, error, onRetry, onPractice,
             <div className="report-score-title"><span>综合评估</span><strong>{score ?? "—"}<small>/100</small></strong></div>
             <div className="report-score-line"><span style={{ width: `${score || 0}%` }} /></div>
             <div className="report-feedback-grid">
-              <div><strong>优势</strong>{report.strengths.length ? report.strengths.map((item) => <p key={item}><CheckCircle size={14} />{item}</p>) : <p>继续积累高质量回答样本。</p>}</div>
-              <div><strong>待提升</strong>{report.weaknesses.length ? report.weaknesses.map((item) => <p key={item}><WarningCircle size={14} />{item}</p>) : <p>当前没有明确弱项。</p>}</div>
+              <div className="is-strength"><strong>优势</strong>{report.strengths.length ? report.strengths.map((item) => <p key={item}><CheckCircle size={14} />{item}</p>) : <p>继续积累高质量回答样本。</p>}</div>
+              <div className="is-weakness"><strong>待提升</strong>{report.weaknesses.length ? report.weaknesses.map((item) => <p key={item}><WarningCircle size={14} />{item}</p>) : <p>当前没有明确弱项。</p>}</div>
             </div>
           </section>
           <section className="report-records">
