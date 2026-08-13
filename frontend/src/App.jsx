@@ -1443,7 +1443,7 @@ function SettingsView({ settings, profiles, profilesLoading, isLoading, isSaving
                 </div>
               ))}
             </div>
-          ) : <div className="configured-model-empty">尚未保存大模型配置，请先配置 OpenAI 兼容接口。</div>}
+          ) : <div className="configured-model-empty">尚未配置大模型。未配置时由内置规则生成器与评价器兜底，仍可运行；配置后可获得更高质量的评价与追问。</div>}
           {profileTestResult && (() => {
             const testedProfile = profiles?.profiles?.find((profile) => profile.id === profileTestResult.profileId);
             return <div className={`settings-feedback profile-test-feedback ${profileTestResult.status === "error" ? "is-error" : "is-success"}`} role={profileTestResult.status === "error" ? "alert" : "status"} aria-live="polite">
