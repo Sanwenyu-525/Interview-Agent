@@ -298,6 +298,10 @@ class OpenAICompatibleClient:
             raise LLMError(f"LLM 模型列表请求失败: {exc}") from exc
         return tuple(dict.fromkeys(model_ids))
 
+    def bind_tools(self, tools):
+        """返回绑定了工具定义的底层 ChatModel，供 tool-calling 决策使用。"""
+        return self._llm.bind_tools(list(tools))
+
 
 def _to_langchain_message(message: Mapping[str, Any]):
     role = str(message.get("role", "user"))
