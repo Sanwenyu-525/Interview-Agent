@@ -10,6 +10,8 @@ workspace/
 output/
 .runtime/
 .playwright-cli/
+test-results/
+playwright-report/
 interview-agent.db
 interview-agent.db-*
 .reasonix/

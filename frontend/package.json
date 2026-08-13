@@ -10,7 +10,8 @@
     "test": "npm run test:api && npm run test:sites && node --test tests/layout.test.mjs tests/project-flow.test.mjs tests/upload.test.mjs tests/composer.test.mjs",
     "preview": "vite preview",
     "test:api": "node --test tests/api.test.mjs",
-    "test:sites": "node --test tests/sites-worker.test.mjs"
+    "test:sites": "node --test tests/sites-worker.test.mjs",
+    "test:e2e": "playwright test"
   },
   "dependencies": {
     "@phosphor-icons/react": "^2.1.10",
@@ -23,6 +24,7 @@
     "vite": "6.4.2"
   },
   "devDependencies": {
+    "@playwright/test": "^1.62.1",
     "@tauri-apps/cli": "^2.11.4"
   }
 }
