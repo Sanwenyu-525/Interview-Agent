@@ -144,8 +144,8 @@ const LLM_PROVIDER_PRESETS = {
   agnes: {
     provider: "openai_compatible",
     provider_name: "Agnes",
-    base_url: "https://apihub.agnes-ai.com/v1",
-    models: ["Agnes-2.0-Flash", "Agnes-2.5-Flash", "Agnes-2.5-Pro-Alpha"],
+    base_url: "https://api.agnes-ai.cn/v1",
+    models: ["agnes-2.0-flash", "agnes-2.5-flash", "agnes-2.5-pro", "agnes-2.5-pro-alpha"],
     description: "适合通用对话、编码和 Agent 工作流",
   },
   deepseek: {

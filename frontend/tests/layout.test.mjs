@@ -267,7 +267,7 @@ test("settings view shows configured model and vendor presets", () => {
 });
 
 test("settings view exposes local preset model suggestions", () => {
-  assert.match(app, /models: \["Agnes-2\.0-Flash", "Agnes-2\.5-Flash", "Agnes-2\.5-Pro-Alpha"\]/);
+  assert.match(app, /models: \["agnes-2\.0-flash", "agnes-2\.5-flash", "agnes-2\.5-pro", "agnes-2\.5-pro-alpha"\]/);
   assert.match(app, /models: \["deepseek-v4-flash", "deepseek-v4-pro"\]/);
   assert.match(app, /本地预设模型/);
   assert.match(app, /候选项来自本地预设/);

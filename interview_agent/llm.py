@@ -284,7 +284,8 @@ class OpenAICompatibleClient:
         return "".join(parts).strip()
 
     def list_models(self) -> tuple[str, ...]:
-        client = getattr(self._llm, "client", None)
+        # root_client 是 OpenAI 顶层客户端；client 只是 chat completions 子资源，没有 .models
+        client = getattr(self._llm, "root_client", None) or getattr(self._llm, "client", None)
         if client is None:
             return ()
         try:
