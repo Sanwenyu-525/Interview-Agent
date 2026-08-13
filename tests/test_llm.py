@@ -343,27 +343,27 @@ class LLMTests(unittest.TestCase):
         self.assertEqual(result.score, 85)
         self.assertEqual(result.evidence_ids, ("e1",))
 
-    def test_invalid_json_raises_explicit_response_error(self):
+    def test_invalid_json_falls_back_to_rule_generator(self):
         generator = LlmQuestionGenerator(client_with(["不是 JSON"]))
 
-        with self.assertRaises(LLMResponseError):
-            generator.generate(
-                topic=sample_project().topics[0],
-                project=sample_project(),
-                level=1,
-                history=[],
-            )
+        result = generator.generate(
+            topic=sample_project().topics[0],
+            project=sample_project(),
+            level=1,
+            history=[],
+        )
 
-    def test_agent_from_environment_keeps_rule_based_default(self):
+        self.assertIsInstance(result, QuestionResult)
+        self.assertTrue(result.question)
+
+    def test_agent_from_environment_uses_llm_fallback_when_unconfigured(self):
         repository = InMemoryProjectRepository()
         with patch.dict(os.environ, {}, clear=True):
             agent = agent_from_environment(repository)
 
         self.assertEqual(agent.__class__.__name__, "InterviewAgent")
-        self.assertEqual(
-            agent.question_generator.__class__.__name__,
-            "RuleBasedQuestionGenerator",
-        )
+        self.assertIsInstance(agent.question_generator, LlmQuestionGenerator)
+        self.assertIsInstance(agent.evaluator, LlmEvaluator)
 
     def test_agent_from_environment_requires_complete_llm_config(self):
         with self.assertRaises(ValueError):

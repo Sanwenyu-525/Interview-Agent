@@ -11,7 +11,7 @@ from dataclasses import asdict, replace
 from pathlib import Path
 from typing import Any, Mapping
 
-from .agent import InterviewAgent
+from .agent import InterviewAgent, RuleBasedEvaluator, RuleBasedQuestionGenerator
 from .agents import AgentDefinition, InMemoryAgentStore, STAGES, _validate_agent_payload
 from .analyzers.registry import AnalyzerRegistry
 from .analyzers.scanner import ProjectScanner
@@ -79,7 +79,7 @@ from .resumes import (
     resume_from_dict,
     updated_at,
 )
-from .review import InterviewOutlineBuilder, ReviewMode, policy_for_mode
+from .review import InterviewOutlineBuilder, ReviewMode
 from .review.director import ToolCallingDirector
 from .review.llm_policy import LlmReviewPolicy
 from .settings import InMemoryLLMSettingsStore, LLMProfile
@@ -295,6 +295,11 @@ class InterviewService:
             # 绑定的配置档案被删除后回退到当前激活配置
             return self.llm_config
 
+    def _client_for_definition(self, definition: AgentDefinition):
+        """按 agent 绑定的配置创建 LLM 客户端；未启用时返回 None，组件回退本地规则。"""
+        config = self._config_for_agent(definition)
+        return OpenAICompatibleClient(config) if config.enabled else None
+
     def _agent_for_profile(
         self,
         profile,
@@ -303,28 +308,28 @@ class InterviewService:
         agent_ids: Mapping[str, str] | None = None,
     ):
         definitions = self._resolve_agent_definitions(agent_mode, agent_ids)
-        if not self.llm_config.enabled:
-            agent = copy.copy(self.agent)
-            if hasattr(agent, "profile"):
-                agent.profile = profile
-            if review_mode is not ReviewMode.TECHNICAL_INTERVIEW:
-                builder = getattr(agent, "policy_builder", None)
-                agent.policy = (
-                    builder(review_mode) if callable(builder) else policy_for_mode(review_mode)
-                )
-            return agent
         questioner = definitions["questioner"]
-        evaluator = definitions["evaluator"]
+        evaluator_def = definitions["evaluator"]
         director = definitions["director"]
-        question_client = OpenAICompatibleClient(self._config_for_agent(questioner))
-        evaluator_client = OpenAICompatibleClient(self._config_for_agent(evaluator))
-        director_client = OpenAICompatibleClient(self._config_for_agent(director))
+        question_client = self._client_for_definition(questioner)
+        evaluator_client = self._client_for_definition(evaluator_def)
+        director_client = self._client_for_definition(director)
+
+        # 默认组件（规则或未带 persona 的 LLM）升级为带 persona 的 LLM 组件；显式注入的自定义组件保留
+        question_generator = self.agent.question_generator
+        if isinstance(question_generator, (RuleBasedQuestionGenerator, LlmQuestionGenerator)):
+            question_generator = LlmQuestionGenerator(question_client, persona=questioner.persona)
+        evaluator = self.agent.evaluator
+        if isinstance(evaluator, (RuleBasedEvaluator, LlmEvaluator)):
+            evaluator = LlmEvaluator(evaluator_client, persona=evaluator_def.persona)
+
         return InterviewAgent(
             repository=self.repository,
-            question_generator=LlmQuestionGenerator(question_client, persona=questioner.persona),
-            evaluator=LlmEvaluator(evaluator_client, persona=evaluator.persona),
+            question_generator=question_generator,
+            evaluator=evaluator,
             profile=profile,
-            outline_builder=InterviewOutlineBuilder(),
+            profile_updater=self.agent.profile_updater,
+            outline_builder=self.agent.outline_builder or InterviewOutlineBuilder(),
             policy=LlmReviewPolicy(director_client, review_mode, persona=director.persona),
             policy_builder=lambda mode, client=director_client, persona=director.persona: LlmReviewPolicy(
                 client, mode, persona=persona

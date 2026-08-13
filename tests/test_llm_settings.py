@@ -2,7 +2,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from interview_agent.agent import InterviewAgent, RuleBasedQuestionGenerator
+from interview_agent.agent import InterviewAgent
 from interview_agent.llm import LlmEvaluator, LlmQuestionGenerator
 from interview_agent.service import InterviewService
 from interview_agent.settings import LLMProfile, InMemoryLLMSettingsStore, SQLiteLLMSettingsStore
@@ -115,7 +115,7 @@ class LLMSettingsTests(unittest.TestCase):
 
         self.assertFalse(result["configured"])
         self.assertIsInstance(service.agent, InterviewAgent)
-        self.assertIsInstance(service.agent.question_generator, RuleBasedQuestionGenerator)
+        self.assertIsInstance(service.agent.question_generator, LlmQuestionGenerator)
 
     def test_sqlite_settings_store_survives_reopen(self):
         with tempfile.TemporaryDirectory() as temp_dir:

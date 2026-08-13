@@ -21,7 +21,7 @@ try:
 except ImportError:  # pragma: no cover - langchain-openai 依赖 openai SDK
     _OpenAIError = OSError
 
-from .agent import InterviewAgent, RuleBasedQuestionGenerator
+from .agent import InterviewAgent, RuleBasedEvaluator, RuleBasedQuestionGenerator
 from .models import Evaluation, ProjectKnowledge, QuestionResult
 from .review import InterviewOutlineBuilder, LlmReviewPolicy
 
@@ -442,6 +442,23 @@ class LlmQuestionGenerator:
             # 兼容 markdown 代码块等容错解析；失败时抛 LLMResponseError。
             return _json_object(content)
 
+    @staticmethod
+    def _fallback_question(topic, project, level, history, review_direction, context, selected_ids):
+        """LLM 不可用或输出非法时，回退到本地规则出题。"""
+        question = RuleBasedQuestionGenerator().generate(
+            topic=topic,
+            project=project,
+            level=level,
+            history=history,
+            review_direction=review_direction or getattr(context, "review_direction", ""),
+            context=context,
+        )
+        return QuestionResult(
+            question=question,
+            evidence_ids=selected_ids,
+            covered_points=(topic.name,),
+        )
+
     def generate(
         self,
         *,
@@ -493,42 +510,21 @@ class LlmQuestionGenerator:
                 "missing_points": ["仍需追问点"],
             },
         }
-        result = self._parse_json(
-            self.client.chat(
-                self._chat_messages(prompt),
-                response_format={"type": "json_object"},
+        try:
+            result = self._parse_json(
+                self.client.chat(
+                    self._chat_messages(prompt),
+                    response_format={"type": "json_object"},
+                )
             )
-        )
+        except Exception:
+            return self._fallback_question(
+                topic, project, level, history, review_direction, context, selected_ids
+            )
         question = str(result.get("question") or "").strip()
-        if not question:
-            question = RuleBasedQuestionGenerator().generate(
-                topic=topic,
-                project=project,
-                level=level,
-                history=history,
-                review_direction=review_direction
-                or getattr(context, "review_direction", ""),
-                context=context,
-            )
-            return QuestionResult(
-                question=question,
-                evidence_ids=selected_ids,
-                covered_points=(topic.name,),
-            )
-        if _mentions_evidence_location(question):
-            question = RuleBasedQuestionGenerator().generate(
-                topic=topic,
-                project=project,
-                level=level,
-                history=history,
-                review_direction=review_direction
-                or getattr(context, "review_direction", ""),
-                context=context,
-            )
-            return QuestionResult(
-                question=question,
-                evidence_ids=selected_ids,
-                covered_points=(topic.name,),
+        if not question or _mentions_evidence_location(question):
+            return self._fallback_question(
+                topic, project, level, history, review_direction, context, selected_ids
             )
         return QuestionResult(
             question=question,
@@ -592,30 +588,32 @@ class LlmEvaluator:
                 "missing_points": ["回答缺失点"],
             },
         }
-        rendered = self._prompt.invoke(
-            {"payload": json.dumps(prompt, ensure_ascii=False, default=str)}
-        )
-        messages = [
-            {"role": message.type, "content": str(message.content)}
-            for message in rendered.to_messages()
-        ]
-        sink = get_stream_sink()
-        if sink is not None:
-            content = self.client.chat_streamed(
-                messages,
-                response_format={"type": "json_object"},
-                sink=sink,
-            )
-        else:
-            content = self.client.chat(
-                messages,
-                response_format={"type": "json_object"},
-            )
-        result = self._parse_json(content)
         try:
+            rendered = self._prompt.invoke(
+                {"payload": json.dumps(prompt, ensure_ascii=False, default=str)}
+            )
+            messages = [
+                {"role": message.type, "content": str(message.content)}
+                for message in rendered.to_messages()
+            ]
+            sink = get_stream_sink()
+            if sink is not None:
+                content = self.client.chat_streamed(
+                    messages,
+                    response_format={"type": "json_object"},
+                    sink=sink,
+                )
+            else:
+                content = self.client.chat(
+                    messages,
+                    response_format={"type": "json_object"},
+                )
+            result = self._parse_json(content)
             score = int(result["score"])
-        except (KeyError, TypeError, ValueError) as exc:
-            raise LLMResponseError("LLM 评价响应缺少有效 score") from exc
+        except Exception:
+            return RuleBasedEvaluator().evaluate(
+                question=question, answer=answer, topic=topic, project=project
+            )
         return Evaluation(
             score=max(0, min(100, score)),
             strengths=list(_string_list(result.get("strengths"))),
@@ -784,9 +782,7 @@ class LlmPositionQuestionGenerator:
 
 
 def agent_from_config(repository, config: LLMConfig) -> InterviewAgent:
-    if not config.enabled:
-        return InterviewAgent(repository=repository)
-    client = OpenAICompatibleClient(config)
+    client = OpenAICompatibleClient(config) if config.enabled else None
     return InterviewAgent(
         repository=repository,
         question_generator=LlmQuestionGenerator(client),
