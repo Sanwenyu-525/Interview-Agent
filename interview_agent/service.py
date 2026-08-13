@@ -80,6 +80,7 @@ from .resumes import (
     updated_at,
 )
 from .review import InterviewOutlineBuilder, ReviewMode, policy_for_mode
+from .review.director import ToolCallingDirector
 from .review.llm_policy import LlmReviewPolicy
 from .settings import InMemoryLLMSettingsStore, LLMProfile
 
@@ -328,6 +329,7 @@ class InterviewService:
             policy_builder=lambda mode, client=director_client, persona=director.persona: LlmReviewPolicy(
                 client, mode, persona=persona
             ),
+            director=ToolCallingDirector(director_client, review_mode, persona=director.persona),
         )
 
     def _workflow_for_agent(self, agent):

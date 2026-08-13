@@ -2,8 +2,10 @@ import unittest
 
 from langchain_core.messages import AIMessage
 
+from interview_agent.agent import InterviewAgent
 from interview_agent.models import AnswerRecord, Evaluation, ProjectKnowledge, Topic
 from interview_agent.profile import CandidateProfile, SkillSnapshot
+from interview_agent.repository import InMemoryProjectRepository
 from interview_agent.review.director import DirectorAction, ToolCallingDirector
 from interview_agent.review.policy import ReviewMode
 
@@ -162,6 +164,50 @@ class DirectorDecisionTests(unittest.TestCase):
                 raise RuntimeError("上游失败")
 
         self.assertIsNone(decide(ExplodingClient([])))
+
+
+class DirectorIntegrationTests(unittest.TestCase):
+    """验证 director 接入 InterviewAgent 后，stop 自动收尾、ask 继续、失败回退规则。"""
+
+    @staticmethod
+    def _agent(content):
+        repository = InMemoryProjectRepository(
+            {
+                1: ProjectKnowledge(
+                    project_id=1,
+                    project_name="支付系统",
+                    topics=[Topic(name="支付", score=80, evidence=["e1"])],
+                    evidence={"e1": {"id": "e1", "source_path": "src/pay.py", "excerpt": "def settle()"}},
+                )
+            }
+        )
+        director = ToolCallingDirector(FakeClient([AIMessage(content=content)]))
+        return InterviewAgent(repository=repository, director=director)
+
+    def test_director_stop_completes_session(self):
+        agent = self._agent('{"action":"stop","reason":"已覆盖充分"}')
+        state = agent.start(project_id=1)
+        updated = agent.submit_answer(state, "我用事务保证一致性")
+        self.assertEqual(updated.status, "completed")
+        self.assertTrue(updated.completed_at)
+        self.assertEqual(updated.next_direction, "已覆盖充分")
+
+    def test_director_ask_continues_session_with_director_choice(self):
+        agent = self._agent('{"action":"ask","topic":"支付","direction":"deep","level":3,"reason":"深挖"}')
+        state = agent.start(project_id=1)
+        updated = agent.submit_answer(state, "我用事务保证一致性")
+        self.assertEqual(updated.status, "waiting_answer")
+        self.assertEqual(updated.current_topic.name, "支付")
+        self.assertEqual(updated.next_direction, "deep")
+        self.assertEqual(updated.level, 3)
+        self.assertTrue(updated.question)
+
+    def test_director_failure_falls_back_to_rule_policy(self):
+        agent = self._agent("不是 JSON")
+        state = agent.start(project_id=1)
+        updated = agent.submit_answer(state, "我用事务保证一致性")
+        self.assertEqual(updated.status, "waiting_answer")
+        self.assertTrue(updated.question)
 
 
 if __name__ == "__main__":

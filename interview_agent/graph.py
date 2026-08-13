@@ -25,6 +25,8 @@ class _InterviewGraphState(TypedDict, total=False):
     direction: str
     next_level: int
     next_topic: Any
+    stop: bool
+    director_reason: str
     next_question: str
     question_result: Any
     result: InterviewState
@@ -68,6 +70,7 @@ class InterviewGraph:
             "generate_follow_up_question", self._generate_follow_up_question
         )
         builder.add_node("assemble_follow_up", self._assemble_follow_up)
+        builder.add_node("assemble_stop", self._assemble_stop)
         builder.add_conditional_edges(
             START,
             self._route_operation,
@@ -83,9 +86,17 @@ class InterviewGraph:
         builder.add_edge("validate_answer", "evaluate_answer")
         builder.add_edge("evaluate_answer", "update_profile")
         builder.add_edge("update_profile", "decide_follow_up")
-        builder.add_edge("decide_follow_up", "generate_follow_up_question")
+        builder.add_conditional_edges(
+            "decide_follow_up",
+            self._route_follow_up,
+            {
+                "continue": "generate_follow_up_question",
+                "stop": "assemble_stop",
+            },
+        )
         builder.add_edge("generate_follow_up_question", "assemble_follow_up")
         builder.add_edge("assemble_follow_up", END)
+        builder.add_edge("assemble_stop", END)
         return builder.compile(checkpointer=self.checkpointer)
 
     def _config(self, thread_id: str | None) -> dict:
@@ -171,6 +182,23 @@ class InterviewGraph:
             state["history"],
             state["working_profile"],
         )
+
+    @staticmethod
+    def _route_follow_up(state: _InterviewGraphState) -> str:
+        return "stop" if state.get("stop") else "continue"
+
+    def _assemble_stop(self, state: _InterviewGraphState) -> dict[str, Any]:
+        return {
+            "result": self.agent.assemble_stop(
+                state["state"],
+                state["answer"],
+                state["evaluation"],
+                state["history"],
+                state["working_profile"],
+                state["pending_profile_update"],
+                state.get("director_reason", ""),
+            )
+        }
 
     def _generate_follow_up_question(
         self, state: _InterviewGraphState

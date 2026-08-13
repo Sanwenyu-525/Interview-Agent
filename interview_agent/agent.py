@@ -165,6 +165,7 @@ class InterviewAgent:
         review_mode: ReviewMode | str = ReviewMode.TECHNICAL_INTERVIEW,
         outline_builder=None,
         policy_builder=None,
+        director=None,
     ):
         self.repository = repository
         self.question_generator = question_generator or RuleBasedQuestionGenerator()
@@ -174,6 +175,7 @@ class InterviewAgent:
         self.pending_profile_update: ProfileUpdate | None = None
         self.policy = policy or policy_for_mode(review_mode)
         self.policy_builder = policy_builder
+        self.director = director
         self.outline_builder = outline_builder
         if outline_builder is None and (
             question_generator is None
@@ -267,6 +269,16 @@ class InterviewAgent:
             turn["history"],
             profile_update["working_profile"],
         )
+        if follow_up.get("stop"):
+            return self.assemble_stop(
+                state,
+                answer,
+                turn["evaluation"],
+                turn["history"],
+                profile_update["working_profile"],
+                profile_update["pending_profile_update"],
+                follow_up.get("director_reason", ""),
+            )
         question = self.generate_follow_up_question(
             state,
             turn["history"],
@@ -344,6 +356,41 @@ class InterviewAgent:
         history: list[AnswerRecord],
         working_profile: CandidateProfile,
     ) -> dict:
+        if self.director is not None:
+            action = self.director.decide_turn(
+                project=state.project,
+                profile=working_profile,
+                history=history,
+                resume_claims=state.resume_claims,
+                current_topic=state.current_topic,
+                current_level=state.level,
+                last_score=evaluation.score,
+                turn_count=len(history),
+            )
+            if action is not None:
+                if action.action == "stop":
+                    return {
+                        "stop": True,
+                        "direction": "",
+                        "next_level": state.level,
+                        "next_topic": state.current_topic,
+                        "director_reason": action.reason,
+                    }
+                next_topic = next(
+                    (
+                        topic
+                        for topic in state.project.topics
+                        if topic.name == action.topic
+                    ),
+                    state.current_topic,
+                )
+                return {
+                    "stop": False,
+                    "direction": action.direction,
+                    "next_level": action.level,
+                    "next_topic": next_topic,
+                    "director_reason": action.reason,
+                }
         direction, next_level = self.policy.next_direction(
             evaluation.score, state.level
         )
@@ -351,9 +398,11 @@ class InterviewAgent:
             state.project, working_profile, history, state.resume_claims
         )
         return {
+            "stop": False,
             "direction": direction,
             "next_level": next_level,
             "next_topic": next_topic,
+            "director_reason": "",
         }
 
     def generate_follow_up_question(
@@ -418,6 +467,34 @@ class InterviewAgent:
             question_covered_points=question_result.covered_points,
             question_missing_points=question_result.missing_points,
             question_analysis=question_result.analysis,
+            last_submitted_question=state.question,
+            last_submitted_answer=answer,
+        )
+        self.profile = working_profile
+        self.pending_profile_update = pending_profile_update
+        return updated
+
+    def assemble_stop(
+        self,
+        state: InterviewState,
+        answer: str,
+        evaluation: Evaluation,
+        history: list[AnswerRecord],
+        working_profile: CandidateProfile,
+        pending_profile_update: ProfileUpdate,
+        reason: str = "",
+    ) -> InterviewState:
+        """Director 判断面试该收尾时，结束会话并标记 completed。"""
+        from datetime import datetime, timezone
+
+        updated = replace(
+            state,
+            answer="",
+            evaluation=evaluation,
+            next_direction=reason,
+            history=history,
+            status="completed",
+            completed_at=datetime.now(timezone.utc).isoformat(),
             last_submitted_question=state.question,
             last_submitted_answer=answer,
         )
