@@ -1,6 +1,6 @@
 # LLM 配置
 
-后端默认使用本地规则引擎，不需要网络或 API Key。需要接入 OpenAI、Agnes、DeepSeek 或其他 OpenAI 兼容服务时，设置以下环境变量：
+agent 的 LLM 组件默认启用；未配置或调用失败时，由内置规则生成器与评价器兜底，保证服务离线也能运行。接入 OpenAI、Agnes、DeepSeek 或其他 OpenAI 兼容服务时，设置以下环境变量：
 
 ```powershell
 $env:LLM_PROVIDER="openai_compatible"
@@ -22,7 +22,7 @@ $env:LLM_TEMPERATURE="0.2"
 
 当前 LLM 负责生成项目面试问题、评价回答和非满分回答的参考答案；项目知识仍来自已有的 Universal Project Model、ProjectKnowledge 和证据引用。LLM 上游仍使用 Chat Completions，应用通过 `/sessions/{session_id}/answers/stream` 将评价阶段、参考答案片段和最终会话状态以 SSE 返回。
 
-如果不配置 `LLM_PROVIDER=openai_compatible`，服务会继续使用规则引擎，便于离线开发和测试。
+未配置 `LLM_PROVIDER=openai_compatible` 时，LLM 组件自动回退到规则生成器与评价器，便于离线开发和测试。
 
 ## 通过应用设置配置
 
@@ -36,7 +36,7 @@ $env:LLM_TEMPERATURE="0.2"
 
 - 可以新增、编辑、删除档案，也可以把任意档案设为当前使用的模型。
 - “测试”只测试已保存档案，不会改变当前激活档案；连接失败时不会切换运行时 Agent。
-- 删除当前档案后，系统会回退到本地规则引擎；其他档案仍会保留。
+- 删除当前档案后，系统回到未配置状态，LLM 组件以规则生成器与评价器兜底；其他档案仍会保留。
 - API Key 只保存在后端 SQLite 中，列表和详情接口只返回 `api_key_set`，不会返回原始密钥。
 - 旧版本的单一 `llm_config` 配置会在读取时兼容为一个档案，现有配置无需手动重填。
 

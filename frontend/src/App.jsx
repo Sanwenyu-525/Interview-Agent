@@ -131,8 +131,8 @@ function defaultEvidencePanelWidth() {
 }
 
 const EMPTY_LLM_SETTINGS = {
-  provider: "rule_based",
-  provider_name: "local",
+  provider: "openai_compatible",
+  provider_name: "custom",
   base_url: "",
   api_key: "",
   model: "",
@@ -1420,7 +1420,7 @@ function SettingsView({ settings, profiles, profilesLoading, isLoading, isSaving
       <section className={`settings-panel llm-settings-card ${editingProfileId || profileFormOpen ? "is-editing" : ""}`}>
         <div className="settings-section-heading">
           <div><span className="view-kicker">模型服务</span><h2>大模型配置</h2></div>
-          <span className={`setting-value ${settings?.configured ? "is-online" : ""}`}><span className="status-dot" />{settings?.configured ? "已配置" : "本地规则引擎"}</span>
+          <span className={`setting-value ${settings?.configured ? "is-online" : ""}`}><span className="status-dot" />{settings?.configured ? "已配置" : "未配置"}</span>
         </div>
         <div className="configured-model-section">
           <div className="settings-subheading"><span>已配置的大模型</span><button className="settings-inline-action" type="button" onClick={startNewProfile} disabled={isSaving}>＋ 新增配置</button></div>
@@ -1443,7 +1443,7 @@ function SettingsView({ settings, profiles, profilesLoading, isLoading, isSaving
                 </div>
               ))}
             </div>
-          ) : <div className="configured-model-empty">尚未保存大模型配置，将使用本地规则引擎。</div>}
+          ) : <div className="configured-model-empty">尚未保存大模型配置，请先配置 OpenAI 兼容接口。</div>}
           {profileTestResult && (() => {
             const testedProfile = profiles?.profiles?.find((profile) => profile.id === profileTestResult.profileId);
             return <div className={`settings-feedback profile-test-feedback ${profileTestResult.status === "error" ? "is-error" : "is-success"}`} role={profileTestResult.status === "error" ? "alert" : "status"} aria-live="polite">
@@ -1474,7 +1474,6 @@ function SettingsView({ settings, profiles, profilesLoading, isLoading, isSaving
             <label className="settings-field">
               <span>服务类型</span>
               <select name="provider" value={form.provider} onChange={handleChange} disabled={busy}>
-                <option value="rule_based">本地规则引擎</option>
                 <option value="openai_compatible">OpenAI 兼容接口</option>
               </select>
               <small>Agnes、OpenAI、DeepSeek 和本地模型都可通过兼容接口接入。</small>

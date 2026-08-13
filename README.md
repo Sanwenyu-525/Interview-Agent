@@ -17,7 +17,7 @@
 - **单 Agent**：出题、评价、追问三个阶段共用一个 Agent（默认"全能面试官"，即原有行为）。
 - **多 Agent 分工**：三个阶段（`questioner` 出题 / `evaluator` 评价 / `director` 追问策略）分别指定 Agent，每个 Agent 可绑定不同的 LLM 配置档案，用于不同角色切换模型或风格。
 
-Agent 定义由「名称 + 角色 + persona 角色设定 + 绑定的 LLM 档案」组成：系统内置 5 个角色（全能面试官、出题官、证据评分官、追问策略官、压力面试官），用户可在应用设置中创建自定义 Agent（`GET/POST/PUT/DELETE /settings/agents`）。persona 只替换 LLM 组件的角色描述，JSON 输出契约由后端固定，不会被用户输入破坏。会话装配的阶段到 Agent 映射随 `agent_ids` 持久化，提交回答时按原组合恢复；未配置 LLM 时仍回退本地规则引擎，角色设定不生效。
+Agent 定义由「名称 + 角色 + persona 角色设定 + 绑定的 LLM 档案」组成：系统内置 5 个角色（全能面试官、出题官、证据评分官、追问策略官、压力面试官），用户可在应用设置中创建自定义 Agent（`GET/POST/PUT/DELETE /settings/agents`）。persona 只替换 LLM 组件的角色描述，JSON 输出契约由后端固定，不会被用户输入破坏。会话装配的阶段到 Agent 映射随 `agent_ids` 持久化，提交回答时按原组合恢复；未配置 LLM 时 LLM 组件兜底到规则生成器与评价器，角色设定不生效。
 
 Interview Agent 当前是一个 **Project Intelligence Engine + Domain Review Agent** 的最小可运行实现：先理解用户提交的项目/作品，再把结构化事实交给领域复盘流程，生成问题、评价和追问。
 
@@ -139,7 +139,7 @@ Stitch 七张产品页面现已全部重构进主应用；当前覆盖状态、�
 2. 当前会话历史：Session Store 中的 `history`，可随 SQLite 会话恢复。
 3. 跨会话面试者画像：Candidate Profile Store 中按 `candidate_id` 保存主题分数、趋势、最近分数、样本数和弱点；每个弱点保留最近一次来源会话、问题和证据引用。
 
-现有工作流保留 `QuestionGenerator`、`Evaluator`、项目仓库、会话存储和 `InterviewGraph` 作为可替换边界；当前使用 LangGraph 编排工作流、LangChain 调用 LLM，但不依赖 LangChain 的自主 Agent 执行器、PostgreSQL、向量数据库或多 Agent 框架。未配置 LLM 时自动回退到本地规则生成器与评价器。
+现有工作流保留 `QuestionGenerator`、`Evaluator`、项目仓库、会话存储和 `InterviewGraph` 作为可替换边界；当前使用 LangGraph 编排工作流、LangChain 调用 LLM，但不依赖 LangChain 的自主 Agent 执行器、PostgreSQL、向量数据库或多 Agent 框架。规则生成器与评价器作为 LLM 组件的兜底：LLM 未配置、调用失败或输出非法时自动回退，保证离线可用与行为可控。
 ## 前端项目目录上传
 
 面试工作台左侧只展示领域层提炼后的粗粒度“核心方向”：当前方向优先，最多展示 5 个方向。项目组件、代码位置和其余分析事实保留在项目资料与证据视图中，避免把结构导航展开成文件/组件清单。

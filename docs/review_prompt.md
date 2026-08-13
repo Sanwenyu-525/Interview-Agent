@@ -30,7 +30,7 @@ docs/api/openapi.json  # HTTP 契约唯一事实源
 1. 依赖：`langchain-core` / `langchain-openai` / `langgraph` / `pypdf`，Python ≥3.10，无 FastAPI/Flask。
 2. 无 `ruff`/`black`/`mypy`/`pre-commit`/`tox` 配置；无 Dockerfile/CI；全库无 `logging`；无 `.env` 加载器，环境变量 `LLM_*` 直接读。
 3. 测试命令：`python -m unittest discover -s tests`（不是 pytest）。
-4. LLM `provider` 仅 `openai_compatible` / `rule_based` 两种，不支持 Claude / Azure 专用接口。
+4. LLM 通过 OpenAI 兼容接口接入（`provider=openai_compatible`）；`rule_based` 仅作为未配置时的内部兜底，不支持 Claude / Azure 专用接口。
 5. LangGraph：graph.py 仅做一次 start/resume 调度，checkpointer 未启用；持久化与"暂停/恢复"全部由 service 层 SQLite 承担。
 6. PDF 只在简历解析（resumes.py，pypdf 提取），项目分析不吃 PDF，走 analyzers 源码解析。
 7. 提示词以中文字符串硬编码在 llm.py 内，没有 prompts/ 目录。
