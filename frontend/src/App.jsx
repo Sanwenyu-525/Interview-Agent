@@ -15,10 +15,12 @@ import {
   ListBullets,
   MagnifyingGlass,
   Minus,
+  Moon,
   Plus,
   ShieldWarning,
   Sparkle,
   Square,
+  Sun,
   WarningCircle,
   X,
 } from "@phosphor-icons/react";
@@ -27,6 +29,7 @@ import usePanelResize from "./usePanelResize.js";
 import { EvidencePanel } from "./components/interview/EvidencePanel.jsx";
 import { InterviewComposer } from "./components/interview/InterviewComposer.jsx";
 import { InterviewThread } from "./components/interview/InterviewThread.jsx";
+import { PageHeader } from "./components/PageHeader.jsx";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   activateLLMProfile,
@@ -94,6 +97,16 @@ const MAX_CONTEXT_RAIL_WIDTH = 360;
 const MIN_EVIDENCE_PANEL_WIDTH = 280;
 const MAX_EVIDENCE_PANEL_WIDTH = 520;
 const MIN_CHAT_WIDTH = 360;
+const MOBILE_PAGE_LABELS = {
+  interview: "面试工作台",
+  positions: "岗位准备",
+  project: "项目资料",
+  resumes: "简历库",
+  report: "会话报告",
+  profile: "能力画像",
+  settings: "应用设置",
+  "session-new": "新建复盘",
+};
 
 function readThemePreference() {
   try {
@@ -102,6 +115,11 @@ function readThemePreference() {
   } catch {
     return "system";
   }
+}
+
+function resolveTheme(theme) {
+  if (theme !== "system") return theme;
+  return globalThis.matchMedia?.("(prefers-color-scheme: dark)")?.matches ? "dark" : "light";
 }
 
 function defaultContextRailWidth() {
@@ -170,10 +188,12 @@ const DEV_FIXTURE = {
   evidence: {},
 };
 
-function CustomTitleBar() {
+function CustomTitleBar({ resolvedTheme, onThemeChange }) {
   const [isTauriWindow, setIsTauriWindow] = useState(false);
   const [isMaximized, setIsMaximized] = useState(false);
   const [windowNotice, setWindowNotice] = useState("");
+  const longPressTimerRef = useRef(null);
+  const suppressClickRef = useRef(false);
 
   useEffect(() => {
     const desktopWindow = Boolean(globalThis.__TAURI_INTERNALS__);
@@ -191,11 +211,42 @@ function CustomTitleBar() {
     return () => unlistenResize?.();
   }, []);
 
-  async function handleWindowMinimize() {
-    if (!isTauriWindow) {
-      setWindowNotice("窗口控制仅在 Tauri 桌面版可用");
+  function restoreSystemTheme() {
+    onThemeChange("system");
+    setWindowNotice("已恢复跟随系统主题");
+  }
+
+  function handleThemePointerDown() {
+    suppressClickRef.current = false;
+    longPressTimerRef.current = setTimeout(() => {
+      suppressClickRef.current = true;
+      restoreSystemTheme();
+    }, 600);
+  }
+
+  function clearLongPress() {
+    if (longPressTimerRef.current) {
+      clearTimeout(longPressTimerRef.current);
+      longPressTimerRef.current = null;
+    }
+  }
+
+  function handleThemeClick() {
+    clearLongPress();
+    if (suppressClickRef.current) {
+      suppressClickRef.current = false;
       return;
     }
+    onThemeChange(resolvedTheme === "dark" ? "light" : "dark");
+  }
+
+  function handleThemeContextMenu(event) {
+    event.preventDefault();
+    clearLongPress();
+    restoreSystemTheme();
+  }
+
+  async function handleWindowMinimize() {
     try {
       await getCurrentWindow().minimize();
     } catch (error) {
@@ -204,10 +255,6 @@ function CustomTitleBar() {
   }
 
   async function handleWindowMaximize() {
-    if (!isTauriWindow) {
-      setWindowNotice("窗口控制仅在 Tauri 桌面版可用");
-      return;
-    }
     try {
       const currentWindow = getCurrentWindow();
       await currentWindow.toggleMaximize();
@@ -218,10 +265,6 @@ function CustomTitleBar() {
   }
 
   async function handleWindowClose() {
-    if (!isTauriWindow) {
-      setWindowNotice("窗口控制仅在 Tauri 桌面版可用");
-      return;
-    }
     try {
       await getCurrentWindow().close();
     } catch (error) {
@@ -238,16 +281,34 @@ function CustomTitleBar() {
       </div>
       <div className="titlebar-drag-region" data-tauri-drag-region>{windowNotice && <span className="titlebar-notice" role="status">{windowNotice}</span>}</div>
       <div className="window-controls" aria-label="窗口控制">
-        <button className="window-control" type="button" aria-label="最小化窗口" onClick={handleWindowMinimize}><Minus size={15} /></button>
-        <button className="window-control" type="button" aria-label={isMaximized ? "还原窗口" : "最大化窗口"} onClick={handleWindowMaximize}><Square size={12} /></button>
-        <button className="window-control window-control-close" type="button" aria-label="关闭窗口" onClick={handleWindowClose}><X size={15} /></button>
+        <button
+          className="window-control window-control-theme"
+          type="button"
+          title={resolvedTheme === "dark" ? "切换到浅色主题（长按或右键恢复跟随系统）" : "切换到深色主题（长按或右键恢复跟随系统）"}
+          aria-label={resolvedTheme === "dark" ? "切换到浅色主题" : "切换到深色主题"}
+          onClick={handleThemeClick}
+          onContextMenu={handleThemeContextMenu}
+          onPointerDown={handleThemePointerDown}
+          onPointerUp={clearLongPress}
+          onPointerLeave={clearLongPress}
+          onPointerCancel={clearLongPress}
+        >
+          {resolvedTheme === "dark" ? <Sun size={15} /> : <Moon size={15} />}
+        </button>
+        {isTauriWindow && (
+          <>
+            <button className="window-control" type="button" aria-label="最小化窗口" onClick={handleWindowMinimize}><Minus size={15} /></button>
+            <button className="window-control" type="button" aria-label={isMaximized ? "还原窗口" : "最大化窗口"} onClick={handleWindowMaximize}><Square size={12} /></button>
+            <button className="window-control window-control-close" type="button" aria-label="关闭窗口" onClick={handleWindowClose}><X size={15} /></button>
+          </>
+        )}
       </div>
     </header>
   );
 }
 
-function AppWindow({ children }) {
-  return <div className="window-shell"><CustomTitleBar />{children}</div>;
+function AppWindow({ resolvedTheme, onThemeChange, children }) {
+  return <div className="window-shell"><CustomTitleBar resolvedTheme={resolvedTheme} onThemeChange={onThemeChange} />{children}</div>;
 }
 
 function directionLabel(direction) {
@@ -620,7 +681,7 @@ async function loadInterviewSession(projectIdOverride = "", candidateIdOverride 
   }
 }
 
-function ProjectUploadControl({ onUploaded, onCreateTask = null, canCreateTask = false, workspaceName = "", initialError = "", initialCompletion = "", defaultOpen = false }) {
+function ProjectUploadControl({ onUploaded, onCreateTask = null, canCreateTask = false, workspaceName = "", initialError = "", initialCompletion = "", defaultOpen = false, pickProjectRef = null }) {
   const [files, setFiles] = useState([]);
   const [directoryPath, setDirectoryPath] = useState("");
   const [projectName, setProjectName] = useState("");
@@ -634,7 +695,18 @@ function ProjectUploadControl({ onUploaded, onCreateTask = null, canCreateTask =
   const [uploadCompletion, setUploadCompletion] = useState(initialCompletion);
   const [isOpen, setIsOpen] = useState(Boolean(initialError || defaultOpen));
   const attachmentRef = useRef(null);
+  const fileInputRef = useRef(null);
   const isDesktop = Boolean(globalThis.__TAURI_INTERNALS__?.invoke);
+
+  useEffect(() => {
+    if (pickProjectRef) pickProjectRef.current = requestProjectPick;
+  });
+
+  function requestProjectPick() {
+    if (isUploading) return;
+    if (isDesktop) handlePickDirectory();
+    else fileInputRef.current?.click();
+  }
 
   useEffect(() => {
     if (!isOpen) return undefined;
@@ -775,6 +847,7 @@ function ProjectUploadControl({ onUploaded, onCreateTask = null, canCreateTask =
                   multiple
                   disabled={isUploading}
                   onChange={handleFileChange}
+                  ref={fileInputRef}
                 />
                 <FolderSimple size={22} weight="duotone" />
                 <span>
@@ -836,6 +909,7 @@ function ProjectUploadControl({ onUploaded, onCreateTask = null, canCreateTask =
 }
 
 function EmptyInterviewView({ onUploaded, initialError }) {
+  const pickProjectRef = useRef(null);
   return (
     <section className="workspace empty-workspace" aria-label="面试工作台">
       <header className="workspace-header">
@@ -848,18 +922,18 @@ function EmptyInterviewView({ onUploaded, initialError }) {
                      <div className="agent-message-list">
   <article className="agent-message agent-message-agent">
               <span className="agent-avatar"><Sparkle size={17} weight="duotone" /></span>
-              <div className="agent-message-body"><span className="message-meta">Interview Agent · 现在</span><div className="message-bubble"><p>你好，我会先理解你的项目结构、技术选择和关键流程，再围绕真实证据开始面试。</p><p>从输入框左侧的 <strong>+</strong> 添加项目目录即可。</p></div></div>
+              <div className="agent-message-body"><span className="message-meta">Interview Agent · 现在</span><div className="message-bubble"><p>你好，我会先理解你的项目结构、技术选择和关键流程，再围绕真实证据开始面试。</p><p>添加项目目录后，我会提取结构、技术栈、流程和证据，再开始提问。</p></div></div>
             </article>
-            <div className="agent-system-message"><FolderSimple size={18} /><span><strong>还没有项目上下文</strong><small>添加项目后，这里会出现分析进度、首个问题和追问记录。</small></span></div>
+            <div className="agent-system-message empty-project-action"><FolderSimple size={18} /><span><strong>还没有项目上下文</strong><small>添加项目后，这里会出现分析进度、首个问题和追问记录。</small><small className="empty-project-capability">支持源码、配置和 UTF-8 文本文档</small></span><button className="primary-button empty-add-project-button" type="button" onClick={() => pickProjectRef.current?.()}><FolderSimple size={16} /> 添加项目目录</button></div>
           </div>
         </div>
-        <InterviewComposer disabled placeholder="先添加项目，再告诉 Agent 你想重点准备什么…" uploadControl={<ProjectUploadControl onUploaded={onUploaded} initialError={initialError} defaultOpen />} />
+        <InterviewComposer disabled placeholder="先添加项目，再告诉 Agent 你想重点准备什么…" uploadControl={<ProjectUploadControl onUploaded={onUploaded} pickProjectRef={pickProjectRef} initialError={initialError} />} />
       </div>
     </section>
   );
 }
 
-function ProjectView({ session }) {
+function ProjectView({ session, onAddProject = () => {} }) {
   const [isOpeningDirectory, setIsOpeningDirectory] = useState(false);
   const [directoryError, setDirectoryError] = useState("");
   const [projectSearch, setProjectSearch] = useState("");
@@ -882,10 +956,30 @@ function ProjectView({ session }) {
   )).toUpperCase();
   const isProjectReady = analysisStatus === "READY";
   const analysisStatusCopy = {
-    WAITING_FOR_PROJECT: { label: "等待项目", title: "先添加一个项目", detail: "添加项目目录后，系统会提取结构、技术栈、流程和可追溯证据。" },
+    WAITING_FOR_PROJECT: { label: "等待项目", title: "尚未添加项目", detail: "添加项目目录后，系统会提取结构、技术栈、流程和可追溯证据。" },
     ANALYZING: { label: "正在分析", title: "项目分析进行中", detail: "项目结构和证据准备完成后，这里会显示可复盘的项目资料。" },
     FAILED: { label: "分析失败", title: "项目分析未完成", detail: session.status?.error || "请检查项目内容后重试分析。" },
   }[analysisStatus] || { label: analysisStatus, title: "项目资料暂不可用", detail: "项目资料准备完成后，这里会显示结构、知识和证据。" };
+
+  if (!isProjectReady) {
+    return (
+      <div className="project-intelligence" data-project-ready="false">
+        <section className={`project-status-state is-${analysisStatus.toLowerCase()}`} aria-live="polite">
+          <span className="project-status-icon"><FolderSimple size={24} /></span>
+          <h2>{analysisStatusCopy.title}</h2>
+          <p>{analysisStatusCopy.detail}</p>
+          {analysisStatus === "WAITING_FOR_PROJECT" && (
+            <>
+              <button className="primary-button project-add-project-button" type="button" onClick={onAddProject}><FolderSimple size={16} /> 添加项目目录</button>
+              <small>支持源码、配置和 UTF-8 文本文档</small>
+            </>
+          )}
+          {analysisStatus === "FAILED" && <button className="primary-button project-add-project-button" type="button" onClick={onAddProject}>回到面试工作台重试</button>}
+        </section>
+      </div>
+    );
+  }
+
   const fallbackStructure = components.map((component, index) => ({
     id: component.name || `component-${index}`,
     name: component.name,
@@ -957,9 +1051,26 @@ function ProjectView({ session }) {
 
   return (
     <div className="project-intelligence" data-project-ready={isProjectReady ? "true" : "false"}>
+      <PageHeader
+        kicker="项目资料"
+        title={session.projectName || universalModel.identity?.name || "未命名项目"}
+        description={`${artifactType || "项目类型未知"} · ${evidenceEntries.length} 条可追溯证据`}
+        actions={(
+          <>
+            <details className="project-technical-details">
+              <summary>技术详情</summary>
+              <span>分析器：{analyzerId}</span><span>模型版本：{schemaVersion}</span>
+            </details>
+            <button className="project-open-button ui-button ui-button-secondary" type="button" onClick={handleOpenDirectory} disabled={isOpeningDirectory}>
+              <ArrowUpRight size={16} /> {isOpeningDirectory ? "正在打开" : "打开项目目录"}
+            </button>
+          </>
+        )}
+      />
+      {directoryError && <div className="form-error project-directory-error"><WarningCircle size={15} /> {directoryError}</div>}
       <aside className="project-structure-pane" aria-label="项目结构">
         <div className="project-structure-heading">
-          <div><strong>{session.projectName || "未命名项目"}</strong><small>项目结构 · {visibleStructure.length} 个节点</small></div>
+          <div><strong>项目结构</strong><small>{visibleStructure.length} 个节点</small></div>
           <span className={`analysis-ready is-${analysisStatus.toLowerCase()}`}><span className="status-dot" />{isProjectReady ? "已就绪" : analysisStatusCopy.label}</span>
         </div>
           <label className="project-search ui-field">
@@ -990,21 +1101,7 @@ function ProjectView({ session }) {
       </aside>
 
       <main className="project-knowledge-pane">
-        <header className="project-knowledge-header">
-          <div>
-            <span className="project-capability-label">当前能力</span>
-            <h1>{session.projectName || universalModel.identity?.name || "未命名项目"}</h1>
-            <div className="project-identity-meta"><span>{artifactType || "项目类型未知"}</span><span>{evidenceEntries.length} 条可追溯证据</span></div>
-          </div>
-          <details className="project-technical-details">
-            <summary>技术详情</summary>
-            <span>分析器：{analyzerId}</span><span>模型版本：{schemaVersion}</span>
-          </details>
-          <button className="project-open-button ui-button ui-button-secondary" type="button" onClick={handleOpenDirectory} disabled={isOpeningDirectory}>
-            <ArrowUpRight size={16} /> {isOpeningDirectory ? "正在打开" : "打开项目目录"}
-          </button>
-        </header>
-        {directoryError && <div className="form-error"><WarningCircle size={15} /> {directoryError}</div>}
+        {directoryError && <div className="form-error project-directory-error"><WarningCircle size={15} /> {directoryError}</div>}
         <nav className={`project-tabs ${isProjectReady ? "" : "is-hidden"}`} aria-label="项目智能资料视图">
           {[
             ["overview", "概览"],
@@ -1016,7 +1113,6 @@ function ProjectView({ session }) {
           ))}
         </nav>
 
-        {!isProjectReady && <section className={`project-status-state is-${analysisStatus.toLowerCase()}`} aria-live="polite"><span className="project-status-icon"><FolderSimple size={24} /></span><h2>{analysisStatusCopy.title}</h2><p>{analysisStatusCopy.detail}</p>{analysisStatus === "WAITING_FOR_PROJECT" && <small>可从面试工作台底部输入框左侧的“+”添加项目。</small>}</section>}
         <div className={`project-tab-content ${isProjectReady ? "" : "is-hidden"}`}>
           {activeProjectTab === "overview" && (
             <>
@@ -1117,6 +1213,8 @@ function SettingsView({ settings, profiles, profilesLoading, isLoading, isSaving
   const [agentFormError, setAgentFormError] = useState("");
   const [agentActionId, setAgentActionId] = useState("");
   const [settingsTab, setSettingsTab] = useState("llm");
+  const [profileFormOpen, setProfileFormOpen] = useState(false);
+  const [formBaseline, setFormBaseline] = useState(() => JSON.stringify({ ...EMPTY_LLM_SETTINGS, profile_name: "" }));
 
   useEffect(() => {
     if (!settings) return;
@@ -1129,7 +1227,10 @@ function SettingsView({ settings, profiles, profilesLoading, isLoading, isSaving
     };
     setForm(nextForm);
     setSelectedProvider(providerPresetKey(settings));
-    if (!editingProfileId) setProfileName("");
+    if (!editingProfileId) {
+      setProfileName("");
+      setFormBaseline(JSON.stringify({ ...nextForm, profile_name: "" }));
+    }
   }, [settings]);
 
   function handleChange(event) {
@@ -1161,6 +1262,18 @@ function SettingsView({ settings, profiles, profilesLoading, isLoading, isSaving
     setSelectedProvider("custom");
     setFormError("");
     setProfileTestResult(null);
+    setProfileFormOpen(true);
+    setFormBaseline(JSON.stringify({ ...EMPTY_LLM_SETTINGS, profile_name: "" }));
+  }
+
+  function cancelProfileForm() {
+    setEditingProfileId("");
+    setProfileName("");
+    setForm(EMPTY_LLM_SETTINGS);
+    setSelectedProvider("custom");
+    setFormError("");
+    setProfileTestResult(null);
+    setProfileFormOpen(false);
   }
 
   function startEditProfile(profile) {
@@ -1177,6 +1290,8 @@ function SettingsView({ settings, profiles, profilesLoading, isLoading, isSaving
     setSelectedProvider(providerPresetKey(profile));
     setFormError("");
     setProfileTestResult(null);
+    setProfileFormOpen(true);
+    setFormBaseline(JSON.stringify({ ...nextForm, profile_name: profile.name || "" }));
   }
 
   function payload() {
@@ -1198,11 +1313,10 @@ function SettingsView({ settings, profiles, profilesLoading, isLoading, isSaving
     }
     if (editingProfileId) {
       await onUpdateProfile(editingProfileId, nextPayload);
-      setEditingProfileId("");
-      setProfileName("");
+      cancelProfileForm();
     } else {
       await onCreateProfile(nextPayload);
-      startNewProfile();
+      cancelProfileForm();
     }
   }
 
@@ -1280,29 +1394,30 @@ function SettingsView({ settings, profiles, profilesLoading, isLoading, isSaving
 
   const busy = isSaving || isTesting;
   const presetModels = LLM_PROVIDER_PRESETS[selectedProvider]?.models || [];
+  const formDirty = JSON.stringify({ ...form, profile_name: profileName }) !== formBaseline;
   return (
     <div className="secondary-view settings-view">
-      <div className="view-heading">
-        <div>
-          <span className="view-kicker"><GearSix size={16} /> 应用设置</span>
-          <h1>工作区设置</h1>
-          <p>配置驱动项目理解和面试评价的大模型。</p>
-        </div>
-        <div className="theme-control" role="group" aria-label="界面主题">
-          <span className="theme-control-label">界面主题</span>
-          <div className="theme-control-options" role="radiogroup" aria-label="选择界面主题">
-            {THEME_OPTIONS.map((option) => (
-              <button className={theme === option.value ? "is-active" : ""} type="button" role="radio" aria-checked={theme === option.value} onClick={() => onThemeChange(option.value)} key={option.value}>{option.label}</button>
-            ))}
+      <PageHeader
+        kicker={<><GearSix size={16} /> 应用设置</>}
+        title="应用设置"
+        description="配置驱动项目理解和面试评价的大模型。"
+        actions={(
+          <div className="theme-control" role="group" aria-label="界面主题">
+            <span className="theme-control-label">界面主题</span>
+            <div className="theme-control-options" role="radiogroup" aria-label="选择界面主题">
+              {THEME_OPTIONS.map((option) => (
+                <button className={theme === option.value ? "is-active" : ""} type="button" role="radio" aria-checked={theme === option.value} onClick={() => onThemeChange(option.value)} key={option.value}>{option.label}</button>
+              ))}
+            </div>
           </div>
-        </div>
-      </div>
+        )}
+      />
       <div className="settings-tabs" role="tablist" aria-label="设置分类">
         <button className={settingsTab === "llm" ? "is-active" : ""} type="button" role="tab" aria-selected={settingsTab === "llm"} onClick={() => setSettingsTab("llm")}>配置大模型</button>
         <button className={settingsTab === "agent" ? "is-active" : ""} type="button" role="tab" aria-selected={settingsTab === "agent"} onClick={() => setSettingsTab("agent")}>Agent 管理</button>
       </div>
       {settingsTab === "llm" && (
-      <section className="settings-panel llm-settings-card">
+      <section className={`settings-panel llm-settings-card ${editingProfileId || profileFormOpen ? "is-editing" : ""}`}>
         <div className="settings-section-heading">
           <div><span className="view-kicker">模型服务</span><h2>大模型配置</h2></div>
           <span className={`setting-value ${settings?.configured ? "is-online" : ""}`}><span className="status-dot" />{settings?.configured ? "已配置" : "本地规则引擎"}</span>
@@ -1351,7 +1466,7 @@ function SettingsView({ settings, profiles, profilesLoading, isLoading, isSaving
         </div>
         {isLoading ? <div className="settings-loading" role="status">正在读取大模型配置…</div> : (
           <form className="llm-settings-form" onSubmit={handleSubmit}>
-            <div className="settings-form-heading"><strong>{editingProfileId ? "编辑大模型配置" : "新增大模型配置"}</strong>{editingProfileId && <button type="button" onClick={startNewProfile} disabled={busy}>取消编辑</button>}</div>
+            <div className="settings-form-heading"><strong>{editingProfileId ? "编辑大模型配置" : "新增大模型配置"}</strong></div>
             <label className="settings-field">
               <span>配置名称</span>
               <input name="profile_name" value={profileName} onChange={(event) => setProfileName(event.target.value)} disabled={busy} placeholder="例如：DeepSeek 生产模型" autoComplete="off" />
@@ -1393,8 +1508,10 @@ function SettingsView({ settings, profiles, profilesLoading, isLoading, isSaving
               <label className="settings-field"><span>超时（秒）</span><input name="timeout" type="number" min="1" step="1" value={form.timeout} onChange={handleChange} disabled={busy} /></label>
             </div>
             <div className="settings-form-actions">
+              <small className="settings-dirty-hint">{!formDirty ? (editingProfileId ? "没有需要保存的修改" : "填写配置后即可保存") : ""}</small>
               <button className="secondary-action" type="button" onClick={handleTest} disabled={busy}>{isTesting ? "正在测试…" : "测试连接"}</button>
-              <button className="primary-action" type="submit" disabled={busy}>{isSaving ? "正在保存…" : "保存配置"}<ArrowRight size={16} /></button>
+              <button className="primary-action" type="submit" disabled={busy || !formDirty}>{isSaving ? "正在保存…" : "保存配置"}<ArrowRight size={16} /></button>
+              {profileFormOpen && <button className="secondary-action" type="button" onClick={cancelProfileForm} disabled={busy}>取消</button>}
             </div>
           </form>
         )}
@@ -1435,7 +1552,7 @@ function SettingsView({ settings, profiles, profilesLoading, isLoading, isSaving
             ))}
           </div>
         ) : <div className="configured-model-empty">当前没有自定义 Agent，可在下方创建。</div>}
-        <div className="settings-subheading agent-form-heading"><span>{editingAgent ? "编辑自定义 Agent" : "新增自定义 Agent"}</span>{editingAgent && <button className="settings-inline-action" type="button" onClick={startNewAgent} disabled={isAgentSaving}>取消编辑</button>}</div>
+        <div className="settings-subheading agent-form-heading"><span>{editingAgent ? "编辑自定义 Agent" : "新增自定义 Agent"}</span></div>
         <form className="agent-settings-form" onSubmit={handleAgentSubmit}>
           <label className="settings-field">
             <span>名称</span>
@@ -1462,6 +1579,7 @@ function SettingsView({ settings, profiles, profilesLoading, isLoading, isSaving
           {agentFormError && <small className="settings-form-error">{agentFormError}</small>}
           <div className="settings-form-actions">
             <button className="primary-action" type="submit" disabled={isAgentSaving}>{isAgentSaving ? "正在保存…" : editingAgent ? "保存修改" : "创建 Agent"}<ArrowRight size={16} /></button>
+            {editingAgent && <button className="secondary-action" type="button" onClick={startNewAgent} disabled={isAgentSaving}>取消编辑</button>}
           </div>
         </form>
         {agentNotice && <div className="settings-feedback is-success" role="status" aria-live="polite"><CheckCircle size={17} />{agentNotice}</div>}
@@ -1482,6 +1600,7 @@ function App() {
   const [session, setSession] = useState(null);
   const [activeView, setActiveView] = useState("interview");
   const [theme, setTheme] = useState(readThemePreference);
+  const [resolvedTheme, setResolvedTheme] = useState(() => resolveTheme(readThemePreference()));
   const [answer, setAnswer] = useState("");
   const [evaluation, setEvaluation] = useState(null);
   const [history, setHistory] = useState([]);
@@ -1541,9 +1660,10 @@ function App() {
     if (typeof document === "undefined") return undefined;
     const mediaQuery = globalThis.matchMedia?.("(prefers-color-scheme: dark)");
     const syncTheme = () => {
-      const resolvedTheme = theme === "system" && mediaQuery?.matches ? "dark" : theme === "system" ? "light" : theme;
-      document.documentElement.dataset.theme = resolvedTheme;
-      document.documentElement.style.colorScheme = resolvedTheme;
+      const nextTheme = resolveTheme(theme);
+      setResolvedTheme(nextTheme);
+      document.documentElement.dataset.theme = nextTheme;
+      document.documentElement.style.colorScheme = nextTheme;
     };
     syncTheme();
     mediaQuery?.addEventListener?.("change", syncTheme);
@@ -1643,24 +1763,35 @@ function App() {
     };
   }, []);
 
-  useEffect(() => {
-    if (!isMoreMenuOpen) return undefined;
+      useEffect(() => {
+        if (!isMoreMenuOpen) return undefined;
 
-    function handlePointerDown(event) {
-      if (!moreMenuRef.current?.contains(event.target)) setIsMoreMenuOpen(false);
-    }
+        function handlePointerDown(event) {
+          if (!moreMenuRef.current?.contains(event.target)) setIsMoreMenuOpen(false);
+        }
 
-    function handleMenuKeyDown(event) {
-      if (event.key === "Escape") setIsMoreMenuOpen(false);
-    }
+        function handleMenuKeyDown(event) {
+          if (event.key === "Escape") setIsMoreMenuOpen(false);
+        }
 
-    document.addEventListener("pointerdown", handlePointerDown);
-    document.addEventListener("keydown", handleMenuKeyDown);
-    return () => {
-      document.removeEventListener("pointerdown", handlePointerDown);
-      document.removeEventListener("keydown", handleMenuKeyDown);
-    };
-  }, [isMoreMenuOpen]);
+        document.addEventListener("pointerdown", handlePointerDown);
+        document.addEventListener("keydown", handleMenuKeyDown);
+        return () => {
+          document.removeEventListener("pointerdown", handlePointerDown);
+          document.removeEventListener("keydown", handleMenuKeyDown);
+        };
+      }, [isMoreMenuOpen]);
+
+      useEffect(() => {
+        if (!isNavOpen) return undefined;
+
+        function handleNavKeyDown(event) {
+          if (event.key === "Escape") setIsNavOpen(false);
+        }
+
+        document.addEventListener("keydown", handleNavKeyDown);
+        return () => document.removeEventListener("keydown", handleNavKeyDown);
+      }, [isNavOpen]);
 
   useEffect(() => {
     const list = messageListRef.current;
@@ -1691,7 +1822,7 @@ function App() {
     try {
       setSessionReport(await getSessionReport(session.sessionId));
     } catch (cause) {
-      setSessionReportError(`无法读取会话复盘：${errorMessage(cause)}`);
+      setSessionReportError(`无法读取会话报告：${errorMessage(cause)}`);
     } finally {
       setIsSessionReportLoading(false);
     }
@@ -2299,7 +2430,7 @@ function App() {
 
   if (bootError) {
     return (
-      <AppWindow>
+      <AppWindow resolvedTheme={resolvedTheme} onThemeChange={handleThemeChange}>
         <main className="status-shell">
           <section className="status-card">
             <Sparkle size={28} weight="duotone" />
@@ -2315,7 +2446,7 @@ function App() {
 
   if (!session) {
     return (
-      <AppWindow>
+      <AppWindow resolvedTheme={resolvedTheme} onThemeChange={handleThemeChange}>
         <main className="status-shell">
           <section className="status-card">
             <Sparkle size={28} weight="duotone" />
@@ -2328,7 +2459,7 @@ function App() {
   }
 
   return (
-    <AppWindow>
+    <AppWindow resolvedTheme={resolvedTheme} onThemeChange={handleThemeChange}>
       <main
         className={`app-shell stitch-shell view-${activeView} ${needsUpload ? "is-empty-project" : ""} ${isEvidenceCollapsed ? "is-evidence-collapsed" : ""} ${leftResize.resizing || rightResize.resizing ? "is-resizing" : ""}`}
         style={{
@@ -2337,17 +2468,26 @@ function App() {
         }}
       >
       <PrimarySidebar activeView={activeView} onNavigate={handlePrimaryNavigation} onNewSession={handleCreateTask} hasProject={Boolean(sessionProjectId(session))} isOpen={isNavOpen} onClose={() => setIsNavOpen(false)} />
-      <button className="mobile-nav-trigger" type="button" aria-label="打开应用导航" aria-controls="app-navigation" aria-expanded={isNavOpen} onClick={() => setIsNavOpen(true)}><ListBullets size={18} /><span>导航</span></button>
+      <div className="mobile-page-bar">
+        <button className="mobile-nav-trigger" type="button" aria-label="打开应用导航" aria-controls="app-navigation" aria-expanded={isNavOpen} onClick={() => setIsNavOpen(true)}><ListBullets size={18} /><span>导航</span></button>
+        <span className="mobile-page-title">{MOBILE_PAGE_LABELS[activeView] || "面试工作台"}</span>
+      </div>
       {activeView === "interview" ? (
         needsUpload ? (
           <EmptyInterviewView onUploaded={handleUploaded} initialError={startupUploadError} />
         ) : (
           <>
-              <InterviewContextRail workspace={workspaceMeta} session={session} tasks={tasks} structure={structure} progress={questionProgress} selectedItem={selectedStructureItem} onSelectTask={handleSelectTask} onSelectStructure={handleStructureSelection} onNewSession={handleCreateTask} onRenameTask={handleRenameTask} onDeleteTask={handleDeleteTask} busyTaskId={busyTaskId} isCreatingSession={isCreatingTask} />
+              <InterviewContextRail workspace={workspaceMeta} session={session} tasks={tasks} structure={structure} progress={questionProgress} selectedItem={selectedStructureItem} onSelectTask={handleSelectTask} onSelectStructure={handleStructureSelection} onNewSession={handleCreateTask} onRenameTask={handleRenameTask} onDeleteTask={handleDeleteTask} busyTaskId={busyTaskId} isCreatingSession={isCreatingTask} onOpenResumeDetail={() => setActiveView("resumes")} />
               <section className="workspace interview-workspace" aria-label="面试工作台">
                 <div className="workspace-resizer is-left" role="separator" aria-label="调整面试结构宽度" aria-orientation="vertical" aria-valuemin={MIN_CONTEXT_RAIL_WIDTH} aria-valuemax={MAX_CONTEXT_RAIL_WIDTH} aria-valuenow={contextRailWidth} tabIndex={0} {...leftResize.handlers} />
                 <header className="workspace-header">
-                  <div className="question-breadcrumb"><button className="icon-button" aria-label="返回项目资料" type="button" onClick={handleBackToProject}><ArrowRight size={17} className="back-icon" /></button><span>{questionProgressLabel} {session.topic && `问题：${session.topic}`}</span></div>
+                  <nav className="question-breadcrumb" aria-label="当前位置">
+                    <button className="crumb-link" type="button" title="返回项目资料" onClick={handleBackToProject}>{workspaceMeta.name || session.projectName || "项目资料"}</button>
+                    <span className="crumb-sep" aria-hidden="true">/</span>
+                    {session.topic && <button className="crumb-link" type="button" title={`回到面试结构：${session.topic}`} onClick={() => handleStructureSelection(session.topic)}>{session.topic}</button>}
+                    {session.topic && <span className="crumb-sep" aria-hidden="true">/</span>}
+                    <span className="crumb-current" aria-current="page">{questionProgressLabel}</span>
+                  </nav>
                   <div className="header-actions">
                     <div className="engine-status"><span className="status-dot" />{session.sessionState === "completed" ? "会话已结束" : "面试引擎在线"}</div>
                     <button className={`text-button evidence-toggle ${isEvidenceOpen ? "is-active" : ""}`} type="button" aria-expanded={isEvidenceOpen} aria-controls="evidence-drawer" onClick={handleEvidenceToggle}><FileCode size={18} /> 证据</button>
@@ -2406,7 +2546,7 @@ function App() {
       ) : activeView === "resumes" ? (
         <section className="workspace secondary-workspace stitch-resume-workspace" aria-label="简历库"><ResumeLibraryView /></section>
       ) : activeView === "project" ? (
-        <section className="workspace secondary-workspace stitch-project-workspace" aria-label="项目资料"><ProjectView session={session} /></section>
+        <section className="workspace secondary-workspace stitch-project-workspace" aria-label="项目资料"><ProjectView session={session} onAddProject={() => setActiveView("interview")} /></section>
       ) : activeView === "session-new" ? (
         <SessionSetupView session={session} candidateId={session.candidateId} isCreating={isCreatingTask} error={interactionNotice} onCreate={handleCreateReviewSession} />
       ) : activeView === "report" ? (

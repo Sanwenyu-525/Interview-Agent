@@ -7,15 +7,19 @@ import {
   createLLMProfile,
   createPosition,
   createResume,
+  createAgent,
   deletePosition,
   deleteResume,
   deleteSession,
   deleteLLMProfile,
+  deleteAgent,
+  getAgents,
   getLLMProfiles,
   getLLMModels,
   getLLMSettings,
   getProjectKnowledge,
   getProjectStatus,
+  getProjects,
   getPositions,
   getResume,
   getResumePdf,
@@ -37,6 +41,7 @@ import {
   submitAnswerStream,
   testLLMConnection,
   testLLMProfile,
+  updateAgent,
   updateResume,
   updateLLMProfile,
   updatePosition,
@@ -467,6 +472,61 @@ test("startInterviewSession carries position and question linkage", async () => 
   }
 });
 
+test("startInterviewSession carries agent mode and agent ids", async () => {
+  const originalFetch = globalThis.fetch;
+  let request;
+  globalThis.fetch = async (url, options) => {
+    request = { url, options };
+    return new Response(JSON.stringify({ session_id: "session-1", state: {} }), { status: 201 });
+  };
+  try {
+    await startInterviewSession(
+      26,
+      "alice",
+      "technical_interview",
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      "multi",
+      { questioner: "builtin-stress", evaluator: "builtin-evaluator", director: "builtin-director" },
+    );
+    assert.deepEqual(JSON.parse(request.options.body), {
+      project_id: 26,
+      candidate_id: "alice",
+      review_mode: "technical_interview",
+      agent_mode: "multi",
+      agent_ids: { questioner: "builtin-stress", evaluator: "builtin-evaluator", director: "builtin-director" },
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("agent CRUD helpers hit the settings/agents endpoints", async () => {
+  const requests = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url, options) => {
+    requests.push({ url, options });
+    return new Response(JSON.stringify({ agents: [] }), { status: 200 });
+  };
+
+  try {
+    await getAgents();
+    await createAgent({ name: "x", role: "questioner", persona: "p" });
+    await updateAgent("custom-1", { name: "y" });
+    await deleteAgent("custom-1");
+    assert.deepEqual(requests.map((item) => [item.url, item.options?.method || "GET"]), [
+      ["http://127.0.0.1:8000/settings/agents", "GET"],
+      ["http://127.0.0.1:8000/settings/agents", "POST"],
+      ["http://127.0.0.1:8000/settings/agents/custom-1", "PUT"],
+      ["http://127.0.0.1:8000/settings/agents/custom-1", "DELETE"],
+    ]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("startInterviewSession keeps the legacy project object registration path", async () => {
   const requests = [];
   const originalFetch = globalThis.fetch;
@@ -645,4 +705,22 @@ test("pickProjectDirectory rejects calls outside Tauri", async () => {
     () => pickProjectDirectory({ invoke: null }),
     /not running in Tauri/,
   );
+});
+
+test("getProjects fetches the project summary list", async () => {
+  const originalFetch = globalThis.fetch;
+  let request;
+  globalThis.fetch = async (url, options) => {
+    request = { url, options };
+    return new Response(JSON.stringify({ projects: [{ project_id: 1, project_name: "支付系统" }], count: 1 }), { status: 200 });
+  };
+
+  try {
+    const result = await getProjects();
+    assert.equal(result.count, 1);
+    assert.equal(result.projects[0].project_name, "支付系统");
+    assert.equal(request.url, "http://127.0.0.1:8000/projects");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });

@@ -12,6 +12,7 @@ output/
 .playwright-cli/
 interview-agent.db
 interview-agent.db-*
+.reasonix/
 
 # Node / 前端构建产物
 frontend/node_modules/

@@ -8,7 +8,16 @@
 
 `InterviewGraph` 支持可选 `checkpointer` 和 `thread_id`，可用于检查点、状态历史和恢复实验。`InterviewService` 通过 `workflow_checkpointer` 参数暴露该能力，但默认不启用；默认会话事实源仍是现有 `SessionStore`。SQLite Checkpointer 需要额外安装 `langgraph-checkpoint-sqlite`，当前未纳入默认依赖。
 
-第一阶段不启用 LangGraph checkpoint：`SessionStore` 仍是会话状态的唯一事实源，因此保留现有 SQLite 持久化、版本校验和失败回滚行为。LLM 交互已通过 LangChain 接入：`ChatOpenAI` 负责与 OpenAI 兼容端点通信，问题生成与评价使用 `ChatPromptTemplate` 组装提示词、`JsonOutputParser` 解析结构化输出；提示词、模型调用和流式协议不再手写。为技术面试、作品集评审和答辩三种模式，`LlmReviewPolicy` 让 LLM 在规则圈定的候选主题与方向集合内做决策，任何失败都回退到同模式的规则策略；问题生成与回答评价在产出最终结果前先输出 `analysis` 思考沉淀并随会话持久化。向量数据库和多 Agent Runtime 当前未接入。
+第一阶段不启用 LangGraph checkpoint：`SessionStore` 仍是会话状态的唯一事实源，因此保留现有 SQLite 持久化、版本校验和失败回滚行为。LLM 交互已通过 LangChain 接入：`ChatOpenAI` 负责与 OpenAI 兼容端点通信，问题生成与评价使用 `ChatPromptTemplate` 组装提示词、`JsonOutputParser` 解析结构化输出；提示词、模型调用和流式协议不再手写。为技术面试、作品集评审和答辩三种模式，`LlmReviewPolicy` 让 LLM 在规则圈定的候选主题与方向集合内做决策，任何失败都回退到同模式的规则策略；问题生成与回答评价在产出最终结果前先输出 `analysis` 思考沉淀并随会话持久化。向量数据库和通用多 Agent Runtime 当前未接入。
+
+### Agent 角色模式
+
+会话支持单 Agent 与多 Agent 角色分工两种模式（`POST /sessions` 的 `agent_mode` 字段，默认 `single`）：
+
+- **单 Agent**：出题、评价、追问三个阶段共用一个 Agent（默认"全能面试官"，即原有行为）。
+- **多 Agent 分工**：三个阶段（`questioner` 出题 / `evaluator` 评价 / `director` 追问策略）分别指定 Agent，每个 Agent 可绑定不同的 LLM 配置档案，用于不同角色切换模型或风格。
+
+Agent 定义由「名称 + 角色 + persona 角色设定 + 绑定的 LLM 档案」组成：系统内置 5 个角色（全能面试官、出题官、证据评分官、追问策略官、压力面试官），用户可在应用设置中创建自定义 Agent（`GET/POST/PUT/DELETE /settings/agents`）。persona 只替换 LLM 组件的角色描述，JSON 输出契约由后端固定，不会被用户输入破坏。会话装配的阶段到 Agent 映射随 `agent_ids` 持久化，提交回答时按原组合恢复；未配置 LLM 时仍回退本地规则引擎，角色设定不生效。
 
 Interview Agent 当前是一个 **Project Intelligence Engine + Domain Review Agent** 的最小可运行实现：先理解用户提交的项目/作品，再把结构化事实交给领域复盘流程，生成问题、评价和追问。
 
@@ -73,9 +82,10 @@ Stitch 七张产品页面现已全部重构进主应用；当前覆盖状态、�
 - `GET /health`：返回本地服务进程健康状态和 API 版本。
 - `POST /projects`：直接注册已有 `ProjectKnowledge`，字段包括 `project_id`、`project_name`、`topics`，以及可选的 `components`、`evidence`、`dependencies`、`weaknesses`。
 - `POST /projects/upload`：上传并分析 `folder` 或 `zip` 描述。`folder` 使用 `{ "files": [{ "path": "...", "content": "..." }] }`；`zip` 使用服务进程可访问的 `{ "source_path": "..." }`，并可选传入 `max_total_size`、`max_file_size`、`max_files`。
+- `GET /projects`：返回已注册项目的摘要列表（`project_id`、`project_name`），供岗位关联选择器使用。
 - `GET /projects/{project_id}/status`：返回 `ProjectAnalysis`，包括 `analysis_status`、`schema_version`、`analyzer_id`、`universal_model`、`knowledge` 和 `error`。
 - `GET /projects/{project_id}/knowledge`：返回供面试流程使用的 `ProjectKnowledge` 兼容模型。
-- `GET /positions`、`POST /positions`：按面试者列出或创建目标岗位。创建请求包含岗位名称、JD 原文，以及可选的公司、来源链接和关联项目 ID；服务端保存 JD、提取任职要求并生成岗位题库。
+- `GET /positions`、`POST /positions`：按面试者列出或创建目标岗位。创建请求包含岗位名称、JD 原文，以及可选的公司、来源链接和关联项目 ID；服务端保存 JD、提取任职要求并生成岗位题库。列表响应中每道题附带 `practice_count`、`average_score`、`last_practiced_at` 练习统计（由练习会话按题目聚合）。
 - `GET /positions/{position_id}`、`PATCH /positions/{position_id}`、`DELETE /positions/{position_id}`：读取、更新或删除一个目标岗位；岗位状态支持 `preparing`、`applied`、`interviewing` 和 `archived`。
 - `POST /positions/{position_id}/questions`：基于最新 JD 和关联项目重新生成岗位题库。只有同时匹配项目内容和具体证据的题目才标记为项目证据题，否则生成经历题。
 - `POST /positions/ocr`：body 为 `{ "image_base64": "...", "mime_type": "image/png" }`，用已配置的大模型视觉能力从 JD 截图中识别原文文本；未配置大模型或图片超过 10MB 时返回 400。
@@ -84,7 +94,7 @@ Stitch 七张产品页面现已全部重构进主应用；当前覆盖状态、�
 - `GET /resumes/{resume_id}`：读取简历详情（含提取的主张列表）。
 - `PATCH /resumes/{resume_id}`：更新岗位、领域、关联项目、状态，或通过 `claims` 数组切换单条主张的 `skip` 标记。
 - `DELETE /resumes/{resume_id}`：从简历库删除简历。
-- `POST /sessions`：body 为 `{ "project_id": 1, "candidate_id": "default", "title": "任务 1", "topic": "Transaction" }`，其中 `title` 和首题 `topic` 可选；也可传 `position_id`、`position_question_id`，从岗位题库创建可回溯的练习会话。`topic` 必须匹配当前项目主题，返回 `session_id` 和初始 `state`。
+- `POST /sessions`：body 为 `{ "project_id": 1, "candidate_id": "default", "title": "任务 1", "topic": "Transaction" }`，其中 `title` 和首题 `topic` 可选；也可传 `position_id`、`position_question_id`，从岗位题库创建可回溯的练习会话。`topic` 必须匹配当前项目主题，返回 `session_id` 和初始 `state`。可传 `agent_mode`（`single`/`multi`，默认 `single`）和 `agent_ids`（阶段到 Agent ID 的映射：单 Agent 用 `{"all": "agent_id"}`，多 Agent 用 `{"questioner": "...", "evaluator": "...", "director": "..."}`），缺省的阶段回退到内置全能面试官。
 - `GET /sessions`：按可选的 `candidate_id`、`project_id`、`position_id` 和 `limit` 返回包含标题的服务端会话摘要，前端用它恢复最近会话、岗位练习历史和其他任务。
 - `GET /sessions/{session_id}`：读取当前会话状态。
 - `PATCH /sessions/{session_id}`：body 为 `{ "title": "新的会话标题" }`，修改最近会话标题。
@@ -103,9 +113,9 @@ Stitch 七张产品页面现已全部重构进主应用；当前覆盖状态、�
 
 侧边栏的“岗位准备”是面试者级的独立页面，不依赖当前是否打开某个项目。用户可以同时保存多个目标岗位，并为每个岗位维护 JD 原文、结构化任职要求、关联项目、独立题库、申请状态和练习历史。一个岗位可关联多个已分析项目；从某道岗位题开始练习后，会话会同时记录岗位和题目 ID，便于回到岗位页查看历史。
 
-当前创建入口支持直接粘贴 JD、导入不超过 1MB 的 `.txt`、`.md`、`.json` 文本文件，或粘贴/导入 JD 截图（不超过 10MB）：截图由已配置的大模型视觉能力识别为文本后填入 JD 输入框，未配置大模型时会提示先到应用设置启用。PDF 的 OCR 尚未实现，这类 JD 需要先复制为文本。题库生成优先使用已配置的大模型：注入岗位要求与项目证据生成题目，结构化校验失败或未配置大模型时回退为确定性的本地规则（能被项目证据支撑的要求生成项目证据题，其余要求生成经历题）。
+当前创建入口支持直接粘贴 JD、导入不超过 1MB 的 `.txt`、`.md`、`.json` 文本文件，或粘贴/导入 JD 截图（不超过 10MB）：截图由已配置的大模型视觉能力识别为文本后填入 JD 输入框，未配置大模型时会提示先到应用设置启用。PDF 的 OCR 尚未实现，这类 JD 需要先复制为文本。关联项目通过项目选择器搜索多选，题目和概览中显示项目名而非 ID；岗位创建后仍可编辑（修改 JD 或关联项目会自动重新生成题库）。题库生成优先使用已配置的大模型：注入岗位要求与项目证据生成题目，结构化校验失败或未配置大模型时回退为确定性的本地规则（能被项目证据支撑的要求生成项目证据题，其余要求生成经历题）。
 
-由岗位题发起的练习会话会记录岗位、题目和该题对应的岗位要求；之后的追问和评价都携带该岗位要求上下文，优先围绕"岗位要求 × 项目证据"的差距展开，本地规则回退时同样会生成"岗位要求提到……"的定向追问。
+由岗位题发起的练习会话会记录岗位、题目和该题对应的岗位要求；之后的追问和评价都携带该岗位要求上下文，优先围绕"岗位要求 × 项目证据"的差距展开，本地规则回退时同样会生成"岗位要求提到……"的定向追问。岗位概览按 JD 要求显示每项要求的题目覆盖与已练进度，题库按"未练 → 低分 → 高分"排序并为每道题标注练习状态（未练 / 已练次数与分数），提供"优先练习"入口直接开始最薄弱题目。
 
 ## 简历库
 

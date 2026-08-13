@@ -38,6 +38,16 @@ test("missing project keeps the Agent chat shell instead of rendering a standalo
   assert.doesNotMatch(app, /function EmptyInterviewView[\s\S]*status-card upload-card/);
 });
 
+test("empty workbench exposes a direct add-project action that reuses the directory picker", () => {
+  assert.match(app, /function EmptyInterviewView[\s\S]*pickProjectRef/);
+  assert.match(app, /function EmptyInterviewView[\s\S]*添加项目目录/);
+  assert.match(app, /pickProjectRef\.current\?\.\(\)/);
+  assert.match(app, /function ProjectUploadControl[\s\S]*pickProjectRef = null/);
+  assert.match(app, /pickProjectRef\.current = requestProjectPick/);
+  assert.match(app, /fileInputRef\.current\?\.click\(\)/);
+  assert.doesNotMatch(app, /从输入框左侧的 <strong>\+<\/strong> 添加项目目录/);
+});
+
 test("interview composer exposes project attachment control for an existing session", () => {
   assert.match(app, /function ProjectUploadControl/);
   assert.match(app, /<InterviewComposer[\s\S]*onUploaded=\{handleUploaded\}/);
@@ -162,6 +172,18 @@ test("project materials distinguish waiting, analyzing, failed, and ready states
   assert.match(app, /project-tab-content \$\{isProjectReady \? "" : "is-hidden"\}/);
 });
 
+test("project materials render a real empty state without placeholder metadata", () => {
+  const projectView = app.slice(app.indexOf("function ProjectView"), app.indexOf("function SettingsView"));
+  assert.match(projectView, /if \(!isProjectReady\) \{/);
+  assert.match(projectView, /尚未添加项目/);
+  assert.match(projectView, /<button className="primary-button project-add-project-button"/);
+  assert.match(projectView, /回到面试工作台重试/);
+  assert.match(app, /<ProjectView session=\{session\} onAddProject=\{/);
+  const readyBoundary = projectView.indexOf("if (!isProjectReady) {");
+  const fakeMetadata = projectView.indexOf("未命名项目");
+  assert.ok(fakeMetadata > readyBoundary, "placeholder project metadata must only render after the ready gate");
+});
+
 test("project materials keep evidence selection explicit and technical metadata secondary", () => {
   assert.match(app, /const currentEvidenceId = selectedEvidenceId;/);
   assert.match(app, /选择证据查看来源/);
@@ -228,6 +250,10 @@ test("attachment menu closes from Escape and outside pointer interaction", () =>
   assert.match(app, /document\.addEventListener\("pointerdown"/);
   assert.match(app, /event\.key === "Escape"/);
   assert.match(app, /attachmentRef\.current\?\.contains\(event\.target\)/);
+});
+
+test("mobile nav drawer closes from Escape", () => {
+  assert.match(app, /if \(!isNavOpen\) return undefined;[\s\S]*event\.key === "Escape"[\s\S]*setIsNavOpen\(false\)/);
 });
 
 test("interview header and structure controls expose real interactions", () => {

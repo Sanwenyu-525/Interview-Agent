@@ -51,9 +51,10 @@ class LlmReviewPolicy:
     防止选出无证据或与项目无关的主题。
     """
 
-    def __init__(self, client, mode=ReviewMode.TECHNICAL_INTERVIEW):
+    def __init__(self, client, mode=ReviewMode.TECHNICAL_INTERVIEW, persona: str | None = None):
         self.client = client
         self.mode = mode
+        self.persona = persona
         self._fallback = policy_for_mode(mode)
 
     def select_topic(
@@ -149,10 +150,11 @@ class LlmReviewPolicy:
         }
 
     def _decide(self, payload: dict) -> dict[str, Any]:
+        role = self.persona or "项目面试考官的策略层"
         messages = [
             {
                 "role": "system",
-                "content": "你是项目面试考官的策略层，只输出 JSON，不要输出任何多余文字。",
+                "content": f"你是{role}，只输出 JSON，不要输出任何多余文字。",
             },
             {
                 "role": "user",

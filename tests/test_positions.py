@@ -317,6 +317,133 @@ class PositionTests(unittest.TestCase):
             summary["sessions"][0]["position_requirement"], question.requirement
         )
 
+    def test_list_projects_returns_id_and_name(self):
+        service = create_service()
+        result = service.list_projects()
+        self.assertEqual(result["count"], 2)
+        self.assertEqual(
+            [item["project_id"] for item in result["projects"]], [11, 12]
+        )
+        self.assertEqual(result["projects"][0]["project_name"], "支付系统")
+
+    def test_projects_http_listing(self):
+        service = create_service()
+        server = create_server(service)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        base_url = f"http://127.0.0.1:{server.server_port}"
+        try:
+            with urlopen(f"{base_url}/projects") as response:
+                listed = json.loads(response.read().decode("utf-8"))
+                self.assertEqual(response.status, 200)
+                self.assertEqual(listed["count"], 2)
+                self.assertEqual(
+                    [item["project_id"] for item in listed["projects"]], [11, 12]
+                )
+                self.assertIn("project_name", listed["projects"][0])
+                self.assertNotIn("topics", listed["projects"][0])
+        finally:
+            server.shutdown()
+            thread.join(timeout=5)
+
+    def test_update_position_regenerates_questions_when_jd_changes(self):
+        service = create_service()
+        position = service.create_position(
+            {
+                "candidate_id": "alice",
+                "title": "后端工程师",
+                "jd_text": "任职要求\n熟悉 Java 与 MySQL",
+                "project_ids": [11],
+            }
+        )
+        original_questions = [question.text for question in position.questions]
+
+        renamed = service.update_position(position.position_id, {"title": "高级后端工程师"})
+        self.assertEqual(renamed.title, "高级后端工程师")
+        self.assertEqual(
+            [question.text for question in renamed.questions], original_questions
+        )
+
+        with_jd = service.update_position(
+            position.position_id, {"jd_text": "任职要求\n掌握 Redis 缓存设计"}
+        )
+        self.assertEqual(len(with_jd.requirements), 1)
+        self.assertNotEqual(
+            [question.text for question in with_jd.questions], original_questions
+        )
+        self.assertTrue(all(
+            "Redis" in question.requirement for question in with_jd.questions
+        ))
+
+    def test_update_position_regenerates_when_projects_change_and_status_only_does_not(self):
+        service = create_service()
+        position = service.create_position(
+            {
+                "candidate_id": "alice",
+                "title": "后端工程师",
+                "jd_text": "熟悉数据库设计",
+                "project_ids": [11],
+            }
+        )
+        changed = service.update_position(position.position_id, {"project_ids": [12]})
+        self.assertEqual(changed.project_ids, (12,))
+        self.assertTrue(all(question.project_id == 12 for question in changed.questions))
+        changed_ids = {question.question_id for question in changed.questions}
+
+        status_only = service.update_position(position.position_id, {"status": "applied"})
+        self.assertEqual(status_only.status, "applied")
+        self.assertEqual(
+            {question.question_id for question in status_only.questions}, changed_ids
+        )
+
+    def test_update_position_rejects_unknown_fields(self):
+        service = create_service()
+        position = service.create_position(
+            {
+                "candidate_id": "alice",
+                "title": "后端工程师",
+                "jd_text": "熟悉数据库设计",
+                "project_ids": [11],
+            }
+        )
+        with self.assertRaises(ValueError):
+            service.update_position(position.position_id, {"questions": []})
+
+    def test_list_positions_attaches_practice_stats_from_sessions(self):
+        service = create_service()
+        position = service.create_position(
+            {
+                "candidate_id": "alice",
+                "title": "Java 工程师",
+                "jd_text": "熟悉事务与数据库设计",
+                "project_ids": [11],
+            }
+        )
+        question = position.questions[0]
+        session_id, _ = service.start_session(
+            11,
+            candidate_id="alice",
+            position_id=position.position_id,
+            position_question_id=question.question_id,
+        )
+        service.submit_answer(session_id, "我用 MySQL 事务隔离级别与回滚机制保证一致性。")
+
+        payloads = service.list_positions("alice")["positions"]
+        self.assertEqual(len(payloads), 1)
+        enriched = {
+            item["question_id"]: item for item in payloads[0]["questions"]
+        }[question.question_id]
+        self.assertGreaterEqual(enriched["practice_count"], 1)
+        self.assertIsNotNone(enriched["average_score"])
+        self.assertTrue(enriched["last_practiced_at"])
+
+        for untouched in payloads[0]["questions"]:
+            if untouched["question_id"] == question.question_id:
+                continue
+            self.assertEqual(untouched["practice_count"], 0)
+            self.assertIsNone(untouched["average_score"])
+            self.assertIsNone(untouched["last_practiced_at"])
+
 
 if __name__ == "__main__":
     unittest.main()

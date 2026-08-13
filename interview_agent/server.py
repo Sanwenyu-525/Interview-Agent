@@ -1,6 +1,7 @@
 import os
 from pathlib import Path
 
+from .agents import SQLiteAgentStore
 from .http_api import create_server
 from .ingestion import IngestionService, WorkspaceManager
 from .llm import LLMConfig, agent_from_config
@@ -30,6 +31,7 @@ def build_server(
     position_store = SQLitePositionStore(database) if database else None
     resume_store = SQLiteResumeStore(database) if database else None
     settings_store = SQLiteLLMSettingsStore(database) if database else InMemoryLLMSettingsStore()
+    agent_store = SQLiteAgentStore(database) if database else None
     llm_config = settings_store.get()
     if llm_config is None:
         llm_config = LLMConfig.from_env()
@@ -45,6 +47,7 @@ def build_server(
         ingestion_service=ingestion_service,
         llm_settings_store=settings_store,
         llm_config=llm_config,
+        agent_store=agent_store,
     )
     return create_server(service, host=host, port=port)
 

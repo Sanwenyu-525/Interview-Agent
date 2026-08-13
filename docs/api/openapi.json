@@ -29,6 +29,13 @@
       }
     },
     "/projects": {
+      "get": {
+        "tags": ["Projects"],
+        "operationId": "listProjects",
+        "responses": {
+          "200": {"description": "已注册项目摘要列表", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ProjectList"}}}}
+        }
+      },
       "post": {
         "tags": ["Projects"],
         "operationId": "registerProjectKnowledge",
@@ -460,6 +467,44 @@
           "502": {"$ref": "#/components/responses/UpstreamError"}
         }
       }
+    },
+    "/settings/agents": {
+      "get": {
+        "tags": ["Agent settings"],
+        "operationId": "listAgents",
+        "responses": {"200": {"description": "内置与自定义 agent 列表", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/AgentList"}}}}}
+      },
+      "post": {
+        "tags": ["Agent settings"],
+        "operationId": "createAgent",
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/CreateAgentRequest"}}}},
+        "responses": {
+          "201": {"description": "自定义 agent 已创建", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/AgentDefinition"}}}},
+          "400": {"$ref": "#/components/responses/InvalidRequest"},
+          "404": {"$ref": "#/components/responses/NotFound"}
+        }
+      }
+    },
+    "/settings/agents/{agent_id}": {
+      "parameters": [{"$ref": "#/components/parameters/AgentId"}],
+      "put": {
+        "tags": ["Agent settings"],
+        "operationId": "updateAgent",
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/UpdateAgentRequest"}}}},
+        "responses": {
+          "200": {"description": "自定义 agent 已更新", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/AgentDefinition"}}}},
+          "400": {"$ref": "#/components/responses/InvalidRequest"},
+          "404": {"$ref": "#/components/responses/NotFound"}
+        }
+      },
+      "delete": {
+        "tags": ["Agent settings"],
+        "operationId": "deleteAgent",
+        "responses": {
+          "200": {"description": "自定义 agent 已删除", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/DeleteAgentResponse"}}}},
+          "404": {"$ref": "#/components/responses/NotFound"}
+        }
+      }
     }
   },
   "components": {
@@ -469,7 +514,8 @@
       "ResumeId": {"name": "resume_id", "in": "path", "required": true, "schema": {"type": "string", "minLength": 1}},
       "SessionId": {"name": "session_id", "in": "path", "required": true, "schema": {"type": "string", "minLength": 1}},
       "CandidateId": {"name": "candidate_id", "in": "path", "required": true, "schema": {"type": "string", "minLength": 1}},
-      "ProfileId": {"name": "profile_id", "in": "path", "required": true, "schema": {"type": "string", "minLength": 1}}
+      "ProfileId": {"name": "profile_id", "in": "path", "required": true, "schema": {"type": "string", "minLength": 1}},
+      "AgentId": {"name": "agent_id", "in": "path", "required": true, "schema": {"type": "string", "minLength": 1}}
     },
     "responses": {
       "InvalidRequest": {"description": "请求 JSON、字段或值无效", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ErrorResponse"}}}},
@@ -505,6 +551,22 @@
           "name": {"type": "string", "minLength": 1},
           "score": {"type": "integer", "minimum": 0, "maximum": 100},
           "evidence": {"type": "array", "items": {"type": "string"}, "default": []}
+        }
+      },
+      "ProjectSummary": {
+        "type": "object",
+        "required": ["project_id", "project_name"],
+        "properties": {
+          "project_id": {"type": "integer", "minimum": 1},
+          "project_name": {"type": "string"}
+        }
+      },
+      "ProjectList": {
+        "type": "object",
+        "required": ["projects", "count"],
+        "properties": {
+          "projects": {"type": "array", "items": {"$ref": "#/components/schemas/ProjectSummary"}},
+          "count": {"type": "integer", "minimum": 0}
         }
       },
       "ProjectKnowledge": {
@@ -602,7 +664,10 @@
           "category": {"enum": ["project_evidence", "experience"]},
           "difficulty": {"type": "integer", "minimum": 1, "maximum": 4},
           "project_id": {"type": ["integer", "null"], "minimum": 1},
-          "evidence_ids": {"type": "array", "items": {"type": "string"}}
+          "evidence_ids": {"type": "array", "items": {"type": "string"}},
+          "practice_count": {"type": "integer", "minimum": 0, "description": "由该题发起的练习会话数"},
+          "average_score": {"type": ["integer", "null"], "minimum": 0, "maximum": 100, "description": "练习会话平均分"},
+          "last_practiced_at": {"type": ["string", "null"], "description": "最近一次练习时间"}
         }
       },
       "TargetPosition": {
@@ -685,7 +750,9 @@
         "required": ["position_id", "deleted"],
         "properties": {
           "position_id": {"type": "string"},
-          "deleted": {"const": true}
+          "position_question_id": {"type": "string"},
+          "agent_mode": {"$ref": "#/components/schemas/AgentMode", "default": "single"},
+          "agent_ids": {"type": "object", "additionalProperties": {"type": "string"}, "description": "会话实际装配的阶段到 agent 的映射"}
         }
       },
       "ResumeStatus": {"enum": ["pending", "analyzing", "extracted"]},
@@ -822,6 +889,7 @@
         }
       },
       "ReviewMode": {"enum": ["technical_interview", "portfolio_review", "defense_review"]},
+      "AgentMode": {"enum": ["single", "multi"], "description": "single 为三个阶段共用一个 agent，multi 为各阶段分别指定 agent"},
       "CreateSessionRequest": {
         "type": "object",
         "additionalProperties": false,
@@ -833,7 +901,9 @@
           "title": {"type": "string", "minLength": 1, "maxLength": 80},
           "topic": {"type": "string", "minLength": 1, "description": "可选的新会话首题主题，必须匹配当前项目主题"},
           "position_id": {"type": "string", "minLength": 1},
-          "position_question_id": {"type": "string", "minLength": 1, "description": "与 position_id 一起传入，从岗位题库指定首题"}
+          "position_question_id": {"type": "string", "minLength": 1, "description": "与 position_id 一起传入，从岗位题库指定首题"},
+          "agent_mode": {"$ref": "#/components/schemas/AgentMode", "default": "single"},
+          "agent_ids": {"type": "object", "additionalProperties": {"type": "string"}, "description": "阶段到 agent 的映射：single 模式用 {\"all\": \"agent_id\"}，multi 模式用 {\"questioner\": \"agent_id\", \"evaluator\": \"agent_id\", \"director\": \"agent_id\"}；缺省的阶段回退到内置全能面试官"}
         }
       },
       "RenameSessionRequest": {
@@ -1070,6 +1140,56 @@
         "type": "object",
         "required": ["ok", "message", "profile_id"],
         "properties": {"ok": {"type": "boolean"}, "message": {"type": "string"}, "profile_id": {"type": ["string", "null"]}}
+      },
+      "AgentDefinition": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "name", "role", "persona", "profile_id", "builtin"],
+        "properties": {
+          "id": {"type": "string"},
+          "name": {"type": "string", "minLength": 1},
+          "role": {"enum": ["generalist", "questioner", "evaluator", "director"]},
+          "persona": {"type": "string", "minLength": 1, "description": "角色设定，只替换 LLM 组件的角色描述，输出契约由后端固定"},
+          "profile_id": {"type": "string", "description": "绑定的 LLM 配置档案；空字符串表示跟随当前激活配置"},
+          "builtin": {"const": false}
+        }
+      },
+      "AgentList": {
+        "type": "object",
+        "required": ["agents"],
+        "properties": {
+          "agents": {"type": "array", "items": {"allOf": [{"$ref": "#/components/schemas/AgentDefinition"}, {"type": "object", "properties": {"builtin": {"const": true}}}]}}
+        }
+      },
+      "CreateAgentRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "role", "persona"],
+        "properties": {
+          "name": {"type": "string", "minLength": 1},
+          "role": {"enum": ["generalist", "questioner", "evaluator", "director"]},
+          "persona": {"type": "string", "minLength": 1},
+          "profile_id": {"type": "string", "default": ""}
+        }
+      },
+      "UpdateAgentRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "name": {"type": "string", "minLength": 1},
+          "role": {"enum": ["generalist", "questioner", "evaluator", "director"]},
+          "persona": {"type": "string", "minLength": 1},
+          "profile_id": {"type": "string"}
+        }
+      },
+      "DeleteAgentResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["agent_id", "deleted"],
+        "properties": {
+          "agent_id": {"type": "string"},
+          "deleted": {"const": true}
+        }
       }
     }
   }

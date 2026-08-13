@@ -25,6 +25,7 @@ PUBLIC_API_OPERATIONS = frozenset(
         ("GET", "/health"),
         ("POST", "/projects"),
         ("POST", "/projects/upload"),
+        ("GET", "/projects"),
         ("GET", "/projects/{project_id}/status"),
         ("GET", "/projects/{project_id}/knowledge"),
         ("GET", "/positions"),
@@ -62,6 +63,10 @@ PUBLIC_API_OPERATIONS = frozenset(
         ("DELETE", "/settings/llm/profiles/{profile_id}"),
         ("POST", "/settings/llm/profiles/{profile_id}/activate"),
         ("POST", "/settings/llm/profiles/{profile_id}/test"),
+        ("GET", "/settings/agents"),
+        ("POST", "/settings/agents"),
+        ("PUT", "/settings/agents/{agent_id}"),
+        ("DELETE", "/settings/agents/{agent_id}"),
     }
 )
 ALLOWED_CORS_HOSTS = frozenset(
@@ -324,6 +329,9 @@ def create_server(service: InterviewService, host: str = "127.0.0.1", port: int 
                         ),
                     )
                     return
+                if parts == ["projects"]:
+                    self._send(200, service.list_projects())
+                    return
                 if parts == ["resumes"]:
                     raw_limit = query_value("limit")
                     limit = int(raw_limit) if raw_limit is not None else 50
@@ -364,6 +372,9 @@ def create_server(service: InterviewService, host: str = "127.0.0.1", port: int 
                     return
                 if parts == ["settings", "llm", "profiles"]:
                     self._send(200, service.get_llm_profiles())
+                    return
+                if parts == ["settings", "agents"]:
+                    self._send(200, service.list_agents())
                     return
                 self._send_error(404, "route_not_found", "路由不存在")
             except (SessionConflictError, ProfileConflictError) as exc:
@@ -433,6 +444,9 @@ def create_server(service: InterviewService, host: str = "127.0.0.1", port: int 
                 if parts == ["settings", "llm", "test"]:
                     self._send(200, service.test_llm_settings(payload))
                     return
+                if parts == ["settings", "agents"]:
+                    self._send(201, service.create_agent(payload))
+                    return
                 if parts == ["sessions"]:
                     session_id, state = service.start_session(
                         payload["project_id"],
@@ -442,6 +456,8 @@ def create_server(service: InterviewService, host: str = "127.0.0.1", port: int 
                         topic_name=payload.get("topic"),
                         position_id=payload.get("position_id"),
                         position_question_id=payload.get("position_question_id"),
+                        agent_mode=payload.get("agent_mode", "single"),
+                        agent_ids=payload.get("agent_ids"),
                     )
                     self._send(201, {"session_id": session_id, "state": state})
                     return
@@ -512,6 +528,9 @@ def create_server(service: InterviewService, host: str = "127.0.0.1", port: int 
                 if len(parts) == 4 and parts[:3] == ["settings", "llm", "profiles"]:
                     self._send(200, service.update_llm_profile(parts[3], payload))
                     return
+                if len(parts) == 3 and parts[:2] == ["settings", "agents"]:
+                    self._send(200, service.update_agent(parts[2], payload))
+                    return
                 self._send_error(404, "route_not_found", "路由不存在")
             except LLMError as exc:
                 self._send_error(502, "llm_upstream_error", str(exc), retryable=True)
@@ -565,6 +584,9 @@ def create_server(service: InterviewService, host: str = "127.0.0.1", port: int 
                     return
                 if len(parts) == 4 and parts[:3] == ["settings", "llm", "profiles"]:
                     self._send(200, service.delete_llm_profile(parts[3]))
+                    return
+                if len(parts) == 3 and parts[:2] == ["settings", "agents"]:
+                    self._send(200, service.delete_agent(parts[2]))
                     return
                 self._send_error(404, "route_not_found", "路由不存在")
             except LLMError as exc:

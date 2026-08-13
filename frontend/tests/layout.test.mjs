@@ -12,6 +12,7 @@ const interviewComposer = await readFile(new URL("../src/components/interview/In
 const interviewThread = await readFile(new URL("../src/components/interview/InterviewThread.jsx", import.meta.url), "utf8");
 const evidencePanel = await readFile(new URL("../src/components/interview/EvidencePanel.jsx", import.meta.url), "utf8");
 const evaluationSummary = await readFile(new URL("../src/components/interview/EvaluationSummary.jsx", import.meta.url), "utf8");
+const pageHeader = await readFile(new URL("../src/components/PageHeader.jsx", import.meta.url), "utf8");
 const tauriConfig = JSON.parse(await readFile(new URL("../src-tauri/tauri.conf.json", import.meta.url), "utf8"));
 
 test("desktop interview keeps a readable evidence-first desktop layout", () => {
@@ -34,6 +35,16 @@ test("responsive interview turns navigation and evidence into accessible drawers
   assert.match(css, /@media \(max-width: 620px\)/);
   assert.match(css, /\.mobile-nav-trigger\s*\{/);
   assert.match(css, /\.view-interview \.evidence-panel\.is-open\s*\{[^}]*transform: translateX\(0\)/s);
+});
+
+test("mobile navigation lives in a fixed page bar above page content", () => {
+  assert.match(app, /className="mobile-page-bar"/);
+  assert.match(app, /className="mobile-page-title"/);
+  assert.match(app, /MOBILE_PAGE_LABELS\[activeView\]/);
+  assert.match(css, /\.mobile-page-bar\s*\{[^}]*display:\s*flex;/s);
+  assert.match(css, /\.mobile-nav-trigger\s*\{[^}]*position:\s*static;/s);
+  assert.doesNotMatch(css, /\.view-interview \.workspace-header \{[^}]*padding-left:\s*68px;/s);
+  assert.doesNotMatch(css, /\.stitch-shell \.workspace-header \{[^}]*padding: 12px 12px 10px 68px;/s);
 });
 
 test("interview focus hierarchy keeps current question open and history collapsed", () => {
@@ -214,7 +225,7 @@ test("interview workbench keeps stateful orchestration in App and view boundarie
 });
 
 test("desktop app uses a custom draggable titlebar with window controls", () => {
-  assert.match(app, /function CustomTitleBar\(\)/);
+  assert.match(app, /function CustomTitleBar\(/);
   assert.match(app, /data-tauri-drag-region/);
   assert.match(app, /getCurrentWindow/);
   assert.match(app, /handleWindowMinimize/);
@@ -278,4 +289,66 @@ test("settings view exposes LLM profile management actions", () => {
   assert.match(app, /profile-test-feedback/);
   assert.match(app, /configured-model-actions/);
   assert.match(app, /name="profile_name"/);
+});
+
+test("P1 settings distinguishes browse create and edit with sticky form actions", () => {
+  assert.match(app, /const \[profileFormOpen, setProfileFormOpen\] = useState\(false\)/);
+  assert.match(app, /const formDirty = JSON\.stringify\(\{ \.\.\.form, profile_name: profileName \}\)/);
+  assert.match(app, /没有需要保存的修改/);
+  assert.match(app, /填写配置后即可保存/);
+  assert.match(app, /llm-settings-card \$\{editingProfileId \|\| profileFormOpen \? "is-editing" : ""\}/);
+  assert.match(app, /onClick=\{cancelProfileForm\}/);
+  assert.match(css, /\.llm-settings-form \.settings-form-actions\s*\{[^}]*position:\s*sticky;[^}]*bottom:\s*0;/s);
+  assert.match(css, /\.llm-settings-card:not\(\.is-editing\) \.llm-settings-form\s*\{[^}]*display:\s*none;/s);
+  assert.match(css, /\.llm-settings-card\.is-editing \.configured-model-section\s*\{[^}]*display:\s*none;/s);
+});
+
+test("P1 first-level pages share one page header frame instead of scattered title styles", () => {
+  assert.match(pageHeader, /export function PageHeader\(/);
+  assert.match(app, /<PageHeader/);
+  assert.match(css, /^\.page-header \{/m);
+  assert.match(css, /^\.page-header-actions \{/m);
+  assert.doesNotMatch(app, /className="view-heading"/);
+  assert.doesNotMatch(css, /\.view-heading/);
+  assert.doesNotMatch(app, /className="project-knowledge-header"/);
+  assert.doesNotMatch(css, /\.project-knowledge-header/);
+});
+
+test("P2 browser preview hides desktop window controls", () => {
+  assert.match(app, /\{isTauriWindow && \([\s\S]*<>[\s\S]*window-control-close/);
+  assert.doesNotMatch(app, /窗口控制仅在 Tauri 桌面版可用/);
+});
+
+test("P1 controls meet readable text and hit-area baselines", () => {
+  assert.match(css, /\.chat-composer textarea::placeholder\s*\{\s*color:\s*var\(--muted\);/);
+  assert.match(css, /\.window-control \{[\s\S]*height: 32px;/);
+  assert.match(css, /\.icon-button \{[\s\S]*width: 32px;[\s\S]*height: 32px;/);
+  assert.match(css, /\.settings-inline-action \{[\s\S]*min-height: 32px;/);
+  assert.match(css, /\.configured-model-actions button[^{]*\{[\s\S]*min-height: 32px;/);
+  assert.match(css, /\.settings-form-actions button \{[\s\S]*min-height: 40px;/);
+  assert.doesNotMatch(css, /\.settings-field > small \{[^}]*font-size: 10px;/);
+  assert.doesNotMatch(css, /\.agent-system-message small \{[^}]*font-size: 10px;/);
+});
+
+test("P1 line audit keeps only semantic boundaries", () => {
+  assert.doesNotMatch(css, /^\.page-header \{[^}]*border-bottom/m);
+  assert.match(css, /\.stitch-shell \.workspace-header \{[^}]*border-bottom:\s*0;/s);
+  assert.doesNotMatch(css, /\.stitch-settings-workspace \.settings-section-heading \{[^}]*border-bottom/s);
+  assert.doesNotMatch(css, /\.stitch-settings-workspace \.configured-model-section \{[^}]*border-right/s);
+  assert.match(css, /\.stitch-settings-workspace \.settings-tabs button\.is-active \{[^}]*border-bottom-color:/s);
+});
+
+test("P1 token migration removes hardcoded colors from high-frequency forms", () => {
+  assert.doesNotMatch(css, /\.icon-button \{[\s\S]{0,120}?#[0-9a-fA-F]{3,6};/);
+  assert.doesNotMatch(css, /\.window-control \{[^}]*#[0-9a-fA-F]{3,6};/s);
+  assert.doesNotMatch(css, /\.window-control:hover \{[^}]*#[0-9a-fA-F]{3,6};/s);
+  assert.doesNotMatch(css, /\.composer-icon-button \{[^}]*#[0-9a-fA-F]{3,6};/s);
+  assert.doesNotMatch(css, /\.primary-button:hover:not\(:disabled\) \{[^}]*#[0-9a-fA-F]{3,6};/s);
+  assert.doesNotMatch(css, /\.source-row \{[^}]*#[0-9a-fA-F]{3,6};/s);
+  assert.doesNotMatch(css, /\.evaluation-note \{[^}]*#[0-9a-fA-F]{3,6};/s);
+  assert.doesNotMatch(css, /\.settings-field input, \.settings-field select \{[^}]*#[0-9a-fA-F]{3,6};/s);
+  assert.doesNotMatch(css, /\.titlebar-notice \{[^}]*#[0-9a-fA-F]{3,6};/s);
+  assert.doesNotMatch(css, /\.attachment-menu \{[^}]*#[0-9a-fA-F]{3,6};/s);
+  assert.doesNotMatch(css, /\.project-risk-banner \{[\s\S]{0,200}?#[0-9a-fA-F]{3,6};/);
+  assert.doesNotMatch(css, /\.project-risk-banner\.is-clear \{[\s\S]{0,200}?#[0-9a-fA-F]{3,6};/);
 });

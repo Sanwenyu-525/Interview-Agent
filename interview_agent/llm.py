@@ -407,13 +407,15 @@ def _mentions_evidence_location(question: str) -> bool:
 
 
 class LlmQuestionGenerator:
-    def __init__(self, client: OpenAICompatibleClient):
+    def __init__(self, client: OpenAICompatibleClient, persona: str | None = None):
         self.client = client
+        self.persona = persona
+        role = persona or "严谨的项目领域面试官"
         self._prompt = ChatPromptTemplate.from_messages(
             [
                 (
                     "system",
-                    "你是严谨的项目领域面试官，只输出 JSON；question 必须是非空字符串。",
+                    f"你是{role}，只输出 JSON；question 必须是非空字符串。",
                 ),
                 ("human", "请根据以下项目知识生成问题：\n{payload}"),
             ]
@@ -534,13 +536,15 @@ class LlmQuestionGenerator:
 
 
 class LlmEvaluator:
-    def __init__(self, client: OpenAICompatibleClient):
+    def __init__(self, client: OpenAICompatibleClient, persona: str | None = None):
         self.client = client
+        self.persona = persona
+        role = persona or "基于证据评分的项目面试评价官"
         self._prompt = ChatPromptTemplate.from_messages(
             [
                 (
                     "system",
-                    "你是基于证据评分的项目面试评价官，只输出 JSON。"
+                    f"你是{role}，只输出 JSON。"
                     "除非回答完整、准确且可验证并评分 100，否则必须给出 reference_answer。",
                 ),
                 ("human", "请评价以下回答：\n{payload}"),

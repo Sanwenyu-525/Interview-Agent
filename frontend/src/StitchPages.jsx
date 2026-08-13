@@ -149,6 +149,15 @@ function candidateLabel(value) {
   return value && value !== "default" ? value : "默认面试者";
 }
 
+function analysisStatusLabel(value) {
+  return {
+    READY: "已就绪",
+    WAITING_FOR_PROJECT: "等待项目",
+    ANALYZING: "正在分析",
+    FAILED: "分析失败",
+  }[value] || value || "已就绪";
+}
+
 function trendLabel(value) {
   return {
     new: "新样本",
@@ -205,7 +214,7 @@ export function PrimarySidebar({ activeView, onNavigate, onNewSession, hasProjec
     ["positions", "岗位准备", Briefcase],
     ["project", "项目资料", FolderSimple],
     ["resumes", "简历库", IdentificationCard],
-    ["report", "会话复盘", FileText],
+    ["report", "会话报告", FileText],
     ["profile", "能力画像", ChartBar],
     ["settings", "应用设置", GearSix],
   ];
@@ -214,7 +223,7 @@ export function PrimarySidebar({ activeView, onNavigate, onNewSession, hasProjec
       {isOpen && <button className="mobile-nav-backdrop" type="button" aria-label="关闭应用导航" onClick={onClose} />}
       <aside id="app-navigation" className={`stitch-primary-sidebar ${isOpen ? "is-open" : ""}`} aria-label="应用导航">
         <button className="mobile-sidebar-close" type="button" aria-label="关闭应用导航" onClick={onClose}><X size={18} /></button>
-      <button className="stitch-new-session" type="button" onClick={onNewSession} disabled={!hasProject}>
+      <button className="stitch-new-session" type="button" onClick={onNewSession} disabled={!hasProject} title={hasProject ? undefined : "先添加项目目录，再开始复盘"}>
         <Plus size={15} weight="bold" /> 新建复盘
       </button>
       <nav>
@@ -688,7 +697,7 @@ export function PositionPreparationView({ candidateId = "default", currentProjec
   );
 }
 
-export function InterviewContextRail({ workspace, session, tasks, structure, progress, selectedItem, onSelectTask, onSelectStructure, onNewSession, onRenameTask, onDeleteTask, busyTaskId, isCreatingSession }) {
+export function InterviewContextRail({ workspace, session, tasks, structure, progress, selectedItem, onSelectTask, onSelectStructure, onNewSession, onRenameTask, onDeleteTask, busyTaskId, isCreatingSession, onOpenResumeDetail }) {
   const [editingTaskId, setEditingTaskId] = useState("");
   const [draftTitle, setDraftTitle] = useState("");
   const [collapsedFields, setCollapsedFields] = useState({ claims: false, structure: false, sessions: false });
@@ -724,7 +733,7 @@ export function InterviewContextRail({ workspace, session, tasks, structure, pro
       <div className="context-workspace-select">
         <small>当前工作区</small>
         <strong>{workspace.name || session.projectName || "未命名项目"}</strong>
-        <span>{session.status?.analysis_status || "READY"}</span>
+        <span>{analysisStatusLabel(session.status?.analysis_status)}</span>
       </div>
       {session.resumeClaims?.length > 0 && (
         <section className="context-resume-claims" aria-label="面试者主张">
@@ -734,10 +743,10 @@ export function InterviewContextRail({ workspace, session, tasks, structure, pro
             {collapsedFields.claims ? <CaretRight size={12} /> : <CaretDown size={12} />}
           </button>
           {!collapsedFields.claims && <>
-            {session.resumeClaims.slice(0, 5).map((claim, index) => (
+            {session.resumeClaims.map((claim, index) => (
               <div className="context-claim" key={`${claim}-${index}`}><span>{claim}</span></div>
             ))}
-            {session.resumeClaims.length > 5 && <small className="context-group-more">其余 {session.resumeClaims.length - 5} 条在简历详情中</small>}
+            <button className="context-claims-link" type="button" onClick={onOpenResumeDetail}>前往简历详情 <ArrowRight size={12} /></button>
           </>}
         </section>
       )}
@@ -981,8 +990,8 @@ export function ResumeUploadDialog({ open, onClose, onCreated }) {
         <footer className="resume-picker-footer">
           <small>{step === "create" ? "保存后会自动提取主张，可在下一步确认" : "可在详情页随时查看原文与已提取内容"}</small>
           <span>
-            {step === "create" && <button type="button" onClick={onClose} disabled={uploading}>取消</button>}
             {step === "create" && <button className="resume-confirm" type="submit" form="resume-create-form" disabled={!pdfFile || uploading}>{uploading ? "正在提取…" : "提交并提取"}<ArrowRight size={15} /></button>}
+            {step === "create" && <button type="button" onClick={onClose} disabled={uploading}>取消</button>}
             {step === "review" && <button type="button" onClick={() => { setStep("create"); setCreatedResume(null); setUploadError(""); }} disabled={uploading}>返回重新选择文件</button>}
             {step === "review" && <button className="resume-confirm" type="button" onClick={handleConfirmCreatedResume} disabled={uploading}>{uploading ? "正在保存…" : "确认并选中"}<ArrowRight size={15} /></button>}
           </span>
@@ -1098,8 +1107,8 @@ export function ResumeEditDialog({ resume, onClose, onSaved }) {
         <footer className="resume-picker-footer">
           <small>不选 PDF 则仅更新姓名、岗位与领域</small>
           <span>
-            <button type="button" onClick={onClose} disabled={saving}>取消</button>
             <button className="resume-confirm" type="submit" form="resume-edit-form" disabled={saving}>{saving ? "正在保存…" : "保存修改"}<ArrowRight size={15} /></button>
+            <button type="button" onClick={onClose} disabled={saving}>取消</button>
           </span>
         </footer>
       </div>
@@ -1329,8 +1338,8 @@ export function SessionSetupView({ session, candidateId, isCreating, error, onCr
             <footer className="resume-picker-footer">
               <small>可随时在简历库管理或补充简历</small>
               <span>
-                <button type="button" onClick={() => setIsResumePickerOpen(false)}>取消</button>
                 <button className="resume-confirm" type="button" onClick={confirmResumeSelection} disabled={!pickerSelectedId}>确认选择<ArrowRight size={15} /></button>
+                <button type="button" onClick={() => setIsResumePickerOpen(false)}>取消</button>
               </span>
             </footer>
           </div>
@@ -1774,18 +1783,18 @@ export function SessionReportView({ report, loading, error, onRetry, onPractice,
     });
     return () => cancelAnimationFrame(frame);
   }, [focusedRecordIndex, report?.session_id]);
-  if (loading) return <PageState title="正在生成会话复盘" detail="读取回答、评价与证据引用…" />;
-  if (error) return <PageState title="无法读取会话复盘" detail={error} action="重新读取" onAction={onRetry} />;
-  if (!report) return <PageState title="暂无会话复盘" detail="完成至少一次回答后，这里会出现基于后端评价的复盘报告。" action="返回练习" onAction={onPractice} />;
+  if (loading) return <PageState title="正在生成会话报告" detail="读取回答、评价与证据引用…" />;
+  if (error) return <PageState title="无法读取会话报告" detail={error} action="重新读取" onAction={onRetry} />;
+  if (!report) return <PageState title="暂无会话报告" detail="完成至少一次回答后，这里会出现基于后端评价的会话报告。" action="返回练习" onAction={onPractice} />;
   const score = report.average_score;
   const sampleCount = report.question_count || report.records.length;
   const isPreliminary = sampleCount < 3;
   const confidenceLabel = isPreliminary ? "初步判断" : sampleCount < 5 ? "样本有限" : "样本较充分";
   return (
-    <section className="stitch-page report-page page-canvas" aria-label="会话复盘报告">
+    <section className="stitch-page report-page page-canvas" aria-label="会话报告">
       <div className="page-card report-card">
         <header className="report-header">
-          <div><span>会话复盘报告</span><h1>{report.project_name}</h1><p>{reviewModeLabel(report.review_mode)} · {candidateLabel(report.candidate_id)} · {sampleCount} 次回答</p></div>
+          <div><span>会话报告</span><h1>{report.project_name}</h1><p>{reviewModeLabel(report.review_mode)} · {candidateLabel(report.candidate_id)} · {sampleCount} 次回答</p></div>
           <div className="report-header-stats"><div><strong>{sampleCount}</strong><small>回答样本</small></div><div><strong>{report.evidence_ids.length}</strong><small>关联证据</small></div></div>
         </header>
         <div className="report-layout">

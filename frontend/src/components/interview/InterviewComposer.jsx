@@ -3,7 +3,7 @@ import { ArrowUp, ChatCircleText, Square, WarningCircle } from "@phosphor-icons/
 export function InterviewComposer({ answer = "", setAnswer = () => {}, onKeyDown, onSubmit, onStop, isSubmitting, error, uploadControl, disabled = false, placeholder = "在这里回答当前问题…" }) {
   return (
     <div className="chat-composer-wrap">
-      <div className="chat-composer-label"><ChatCircleText size={17} weight="duotone" /><span>{disabled ? "和 Agent 开始对话" : "你的回答"}</span>{!disabled && <small>{answer.length} 字</small>}</div>
+      <div className="chat-composer-label"><ChatCircleText size={17} weight="duotone" /><span>{disabled ? "告诉 Agent 你的准备重点" : "你的回答"}</span>{!disabled && <small>{answer.length} 字</small>}</div>
       <div className={`chat-composer ${error ? "has-error" : ""} ${isSubmitting ? "is-busy" : ""}`} aria-busy={isSubmitting}>
         <textarea value={answer} onChange={(event) => setAnswer(event.target.value)} onKeyDown={onKeyDown} placeholder={placeholder} aria-label={disabled ? "和 Agent 对话" : "你的回答"} disabled={disabled} />
         <div className="chat-composer-footer">

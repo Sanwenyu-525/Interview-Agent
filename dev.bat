@@ -27,8 +27,9 @@ echo.
 echo   1. 启动桌面版 (Tauri)
 echo   2. 启动浏览器版 (后端 8000 / 前端 4173)
 echo   3. 停止所有服务
-echo   4. 查看服务状态
-echo   5. 查看日志
+echo   4. 重启开发环境
+echo   5. 查看服务状态
+echo   6. 查看日志
 echo   0. 退出
 echo.
 set "ACTION="
@@ -37,8 +38,9 @@ set /p "CHOICE=请输入数字并回车: "
 if "%CHOICE%"=="1" set "ACTION=desktop"
 if "%CHOICE%"=="2" set "ACTION=start"
 if "%CHOICE%"=="3" set "ACTION=stop"
-if "%CHOICE%"=="4" set "ACTION=status"
-if "%CHOICE%"=="5" set "ACTION=logs"
+if "%CHOICE%"=="4" set "ACTION=restart"
+if "%CHOICE%"=="5" set "ACTION=status"
+if "%CHOICE%"=="6" set "ACTION=logs"
 if "%CHOICE%"=="0" exit /b 0
 
 if "%ACTION%"=="" (

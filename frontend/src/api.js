@@ -110,6 +110,10 @@ export function getProjectKnowledge(projectId) {
   return request(`/projects/${projectId}/knowledge`);
 }
 
+export function getProjects() {
+  return request("/projects");
+}
+
 export function getPositions({ candidateId = "default", limit } = {}) {
   const params = new URLSearchParams();
   if (candidateId && String(candidateId).trim()) params.set("candidate_id", String(candidateId));
@@ -343,7 +347,7 @@ export function submitAnswerStream(answer, session, onEvent, signal) {
   }, onEvent, signal);
 }
 
-export async function startInterviewSession(projectId, candidateId, reviewMode, title, topic, positionId, positionQuestionId) {
+export async function startInterviewSession(projectId, candidateId, reviewMode, title, topic, positionId, positionQuestionId, agentMode, agentIds) {
   let resolvedProjectId = projectId;
 
   // Keep the old object-based API working for callers that still register a
@@ -375,11 +379,41 @@ export async function startInterviewSession(projectId, candidateId, reviewMode, 
   if (positionQuestionId !== undefined && positionQuestionId !== null && String(positionQuestionId).trim()) {
     payload.position_question_id = positionQuestionId;
   }
+  if (agentMode !== undefined && agentMode !== null && String(agentMode).trim()) {
+    payload.agent_mode = agentMode;
+  }
+  if (agentIds !== undefined && agentIds !== null) {
+    payload.agent_ids = agentIds;
+  }
   const result = await request("/sessions", {
     method: "POST",
     body: JSON.stringify(payload),
   });
   return { sessionId: result.session_id, state: result.state };
+}
+
+export function getAgents() {
+  return request("/settings/agents");
+}
+
+export function createAgent(definition) {
+  return request("/settings/agents", {
+    method: "POST",
+    body: JSON.stringify(definition),
+  });
+}
+
+export function updateAgent(agentId, patch) {
+  return request(`/settings/agents/${encodeURIComponent(agentId)}`, {
+    method: "PUT",
+    body: JSON.stringify(patch),
+  });
+}
+
+export function deleteAgent(agentId) {
+  return request(`/settings/agents/${encodeURIComponent(agentId)}`, {
+    method: "DELETE",
+  });
 }
 
 export function openProjectDirectory(path, invoke = globalThis.__TAURI_INTERNALS__?.invoke) {

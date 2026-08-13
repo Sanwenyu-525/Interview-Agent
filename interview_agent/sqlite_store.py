@@ -203,6 +203,13 @@ def _validate_state_payload(payload: dict) -> None:
     _require_session_type(payload, "position_question_id", str, required=False)
     _require_session_type(payload, "position_requirement", str, required=False)
     _require_session_type(payload, "position_title", str, required=False)
+    _require_session_type(payload, "agent_mode", str, required=False)
+    agent_ids = payload.get("agent_ids", {})
+    if not isinstance(agent_ids, dict) or not all(
+        isinstance(key, str) and isinstance(value, str)
+        for key, value in agent_ids.items()
+    ):
+        raise ValueError("session payload field agent_ids must be a string object")
 
     _require_session_type(project, "project_id", int)
     _require_session_type(project, "project_name", str, required=False)
@@ -293,6 +300,8 @@ def _state_from_dict(payload: dict) -> InterviewState:
             position_requirement=payload.get("position_requirement", ""),
             position_title=payload.get("position_title", ""),
             resume_claims=list(payload.get("resume_claims", [])),
+            agent_mode=payload.get("agent_mode", "single"),
+            agent_ids=dict(payload.get("agent_ids", {})),
         )
     except (AttributeError, KeyError, TypeError) as exc:
         raise ValueError("session payload contains invalid state fields") from exc

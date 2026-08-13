@@ -196,12 +196,15 @@ class InterviewState:
     position_requirement: str = ""
     position_title: str = ""
     resume_claims: tuple[str, ...] = field(default_factory=tuple)
+    agent_mode: str = "single"
+    agent_ids: dict[str, str] = field(default_factory=dict)
 
     def __post_init__(self):
         self.question_evidence_ids = tuple(self.question_evidence_ids)
         self.question_covered_points = tuple(self.question_covered_points)
         self.question_missing_points = tuple(self.question_missing_points)
         self.resume_claims = tuple(self.resume_claims)
+        self.agent_ids = dict(self.agent_ids)
 
 
 def project_model_to_knowledge(model: Any) -> ProjectKnowledge:

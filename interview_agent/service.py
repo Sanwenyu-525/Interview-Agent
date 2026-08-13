@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from .agent import InterviewAgent
+from .agents import AgentDefinition, InMemoryAgentStore, STAGES, _validate_agent_payload
 from .analyzers.registry import AnalyzerRegistry
 from .analyzers.scanner import ProjectScanner
 from .graph import InterviewGraph
@@ -30,7 +31,9 @@ from .ingestion.security import normalize_project_id
 from .llm import (
     LLMConfig,
     LLMError,
+    LlmEvaluator,
     LlmPositionQuestionGenerator,
+    LlmQuestionGenerator,
     OpenAICompatibleClient,
     agent_from_config,
     ocr_jd_text,
@@ -76,7 +79,8 @@ from .resumes import (
     resume_from_dict,
     updated_at,
 )
-from .review import ReviewMode, policy_for_mode
+from .review import InterviewOutlineBuilder, ReviewMode, policy_for_mode
+from .review.llm_policy import LlmReviewPolicy
 from .settings import InMemoryLLMSettingsStore, LLMProfile
 
 
@@ -233,9 +237,11 @@ class InterviewService:
         llm_client: OpenAICompatibleClient | None = None,
         workflow_factory=InterviewGraph,
         workflow_checkpointer=None,
+        agent_store=None,
     ):
         self.repository = repository or InMemoryProjectRepository()
         self.llm_settings_store = llm_settings_store or InMemoryLLMSettingsStore()
+        self.agent_store = agent_store or InMemoryAgentStore()
         self.llm_config = llm_config or self.llm_settings_store.get()
         self._llm_client = llm_client
         self.agent = agent or agent_from_config(self.repository, self.llm_config)
@@ -254,16 +260,75 @@ class InterviewService:
         self._candidate_locks: dict[str, Lock] = {}
         self._candidate_locks_guard = Lock()
 
-    def _agent_for_profile(self, profile, review_mode=ReviewMode.TECHNICAL_INTERVIEW):
-        agent = copy.copy(self.agent)
-        if hasattr(agent, "profile"):
-            agent.profile = profile
-        if review_mode is not ReviewMode.TECHNICAL_INTERVIEW:
-            builder = getattr(agent, "policy_builder", None)
-            agent.policy = (
-                builder(review_mode) if callable(builder) else policy_for_mode(review_mode)
-            )
-        return agent
+    def _resolve_agent_definitions(
+        self,
+        agent_mode: str,
+        agent_ids: Mapping[str, str] | None,
+    ) -> dict[str, AgentDefinition]:
+        if agent_ids is None:
+            agent_ids = {}
+        if not isinstance(agent_ids, Mapping) or not all(
+            isinstance(key, str) and isinstance(value, str)
+            for key, value in agent_ids.items()
+        ):
+            raise ValueError("agent_ids 必须是字符串映射")
+        default_id = "builtin-generalist"
+        if agent_mode == "multi":
+            resolved = {}
+            for stage in STAGES:
+                agent_id = agent_ids.get(stage, "")
+                resolved[stage] = (
+                    self.agent_store.get(agent_id) if agent_id else self.agent_store.get(default_id)
+                )
+            return resolved
+        agent_id = agent_ids.get("all", "") or default_id
+        definition = self.agent_store.get(agent_id)
+        return {stage: definition for stage in STAGES}
+
+    def _config_for_agent(self, definition: AgentDefinition) -> LLMConfig:
+        if not definition.profile_id:
+            return self.llm_config
+        try:
+            return self.llm_settings_store.get_profile(definition.profile_id).config
+        except KeyError:
+            # 绑定的配置档案被删除后回退到当前激活配置
+            return self.llm_config
+
+    def _agent_for_profile(
+        self,
+        profile,
+        review_mode=ReviewMode.TECHNICAL_INTERVIEW,
+        agent_mode: str = "single",
+        agent_ids: Mapping[str, str] | None = None,
+    ):
+        definitions = self._resolve_agent_definitions(agent_mode, agent_ids)
+        if not self.llm_config.enabled:
+            agent = copy.copy(self.agent)
+            if hasattr(agent, "profile"):
+                agent.profile = profile
+            if review_mode is not ReviewMode.TECHNICAL_INTERVIEW:
+                builder = getattr(agent, "policy_builder", None)
+                agent.policy = (
+                    builder(review_mode) if callable(builder) else policy_for_mode(review_mode)
+                )
+            return agent
+        questioner = definitions["questioner"]
+        evaluator = definitions["evaluator"]
+        director = definitions["director"]
+        question_client = OpenAICompatibleClient(self._config_for_agent(questioner))
+        evaluator_client = OpenAICompatibleClient(self._config_for_agent(evaluator))
+        director_client = OpenAICompatibleClient(self._config_for_agent(director))
+        return InterviewAgent(
+            repository=self.repository,
+            question_generator=LlmQuestionGenerator(question_client, persona=questioner.persona),
+            evaluator=LlmEvaluator(evaluator_client, persona=evaluator.persona),
+            profile=profile,
+            outline_builder=InterviewOutlineBuilder(),
+            policy=LlmReviewPolicy(director_client, review_mode, persona=director.persona),
+            policy_builder=lambda mode, client=director_client, persona=director.persona: LlmReviewPolicy(
+                client, mode, persona=persona
+            ),
+        )
 
     def _workflow_for_agent(self, agent):
         if self.workflow_checkpointer is None:
@@ -290,6 +355,48 @@ class InterviewService:
             self._llm_client = None
         self.agent = agent_from_config(self.repository, config)
         self.llm_config = config
+
+    def list_agents(self):
+        return {
+            "agents": [agent.public_payload() for agent in self.agent_store.list_agents()]
+        }
+
+    def create_agent(self, payload: dict):
+        fields = _validate_agent_payload(payload)
+        agent = AgentDefinition(
+            uuid.uuid4().hex,
+            fields["name"],
+            fields["role"],
+            fields["persona"],
+            fields["profile_id"],
+        )
+        self.agent_store.save_agent(agent)
+        return agent.public_payload()
+
+    def update_agent(self, agent_id: str, payload: dict):
+        current = self.agent_store.get(agent_id)
+        if current.builtin:
+            raise ValueError("内置 agent 不可修改")
+        merged = {
+            "name": payload.get("name", current.name),
+            "role": payload.get("role", current.role),
+            "persona": payload.get("persona", current.persona),
+            "profile_id": payload.get("profile_id", current.profile_id),
+        }
+        fields = _validate_agent_payload(merged)
+        agent = AgentDefinition(
+            agent_id,
+            fields["name"],
+            fields["role"],
+            fields["persona"],
+            fields["profile_id"],
+        )
+        self.agent_store.save_agent(agent)
+        return agent.public_payload()
+
+    def delete_agent(self, agent_id: str):
+        self.agent_store.delete_agent(agent_id)
+        return {"agent_id": agent_id, "deleted": True}
 
     def update_llm_settings(self, payload: dict):
         if not isinstance(payload, dict):
@@ -428,6 +535,16 @@ class InterviewService:
         )
         return project
 
+    def list_projects(self) -> dict:
+        projects = self.repository.list()
+        return {
+            "projects": [
+                {"project_id": project.project_id, "project_name": project.project_name}
+                for project in projects
+            ],
+            "count": len(projects),
+        }
+
     def _position_projects(self, project_ids) -> tuple[ProjectKnowledge, ...]:
         normalized_ids = normalize_project_ids(project_ids)
         projects = []
@@ -525,7 +642,50 @@ class InterviewService:
         if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 100:
             raise ValueError("limit must be an integer between 1 and 100")
         positions = self.position_store.list(normalize_candidate_id(candidate_id), limit)
-        return {"positions": positions, "count": len(positions)}
+        return {
+            "positions": self._position_practice_payloads(positions),
+            "count": len(positions),
+        }
+
+    def _position_practice_payloads(self, positions: list) -> list:
+        if not positions:
+            return []
+        candidate_id = positions[0].candidate_id
+        sessions = self.list_sessions(candidate_id=candidate_id, limit=100)["sessions"]
+        stats_by_key: dict[tuple, dict] = {}
+        for summary in sessions:
+            position_id = summary.get("position_id")
+            question_id = summary.get("position_question_id")
+            if not position_id or not question_id or summary.get("average_score") is None:
+                continue
+            entry = stats_by_key.setdefault(
+                (position_id, question_id), {"count": 0, "scores": [], "last": ""}
+            )
+            entry["count"] += 1
+            entry["scores"].append(summary["average_score"])
+            if summary.get("updated_at", "") > entry["last"]:
+                entry["last"] = summary["updated_at"]
+        payloads = []
+        for position in positions:
+            payload = asdict(position)
+            questions = []
+            for question in payload["questions"]:
+                stats = stats_by_key.get((position.position_id, question["question_id"]))
+                questions.append(
+                    {
+                        **question,
+                        "practice_count": stats["count"] if stats else 0,
+                        "average_score": (
+                            round(sum(stats["scores"]) / len(stats["scores"]))
+                            if stats and stats["scores"]
+                            else None
+                        ),
+                        "last_practiced_at": stats["last"] if stats else None,
+                    }
+                )
+            payload["questions"] = questions
+            payloads.append(payload)
+        return payloads
 
     def update_position(self, position_id: str, payload: dict) -> TargetPosition:
         if not isinstance(payload, dict) or not payload:
@@ -1022,6 +1182,8 @@ class InterviewService:
         topic_name: str | None = None,
         position_id: str | None = None,
         position_question_id: str | None = None,
+        agent_mode: str = "single",
+        agent_ids: Mapping[str, str] | None = None,
     ) -> tuple[str, InterviewState]:
         normalized_id = normalize_project_id(project_id)
         candidate_id = normalize_candidate_id(candidate_id)
@@ -1030,6 +1192,9 @@ class InterviewService:
             if isinstance(review_mode, ReviewMode)
             else ReviewMode(review_mode)
         )
+        resolved_agent_mode = str(agent_mode).strip() or "single"
+        if resolved_agent_mode not in ("single", "multi"):
+            raise ValueError("agent_mode 必须是 single 或 multi")
         requested_title = _session_title(title) if title is not None else ""
         requested_topic_name = str(topic_name).strip() if topic_name is not None else ""
         if topic_name is not None and not requested_topic_name:
@@ -1077,7 +1242,16 @@ class InterviewService:
         session_id = uuid.uuid4().hex
         resume_claims = self._resume_claims_for_candidate(str(candidate_id))
         profile = self.profile_store.get(candidate_id)
-        agent = self._agent_for_profile(profile, resolved_review_mode)
+        definitions = self._resolve_agent_definitions(resolved_agent_mode, agent_ids)
+        resolved_agent_ids = {
+            stage: definition.agent_id for stage, definition in definitions.items()
+        }
+        agent = self._agent_for_profile(
+            profile,
+            resolved_review_mode,
+            resolved_agent_mode,
+            resolved_agent_ids,
+        )
         try:
             workflow = self._workflow_for_agent(agent)
             start_kwargs = {"project_id": normalized_id}
@@ -1122,6 +1296,8 @@ class InterviewService:
                 position_question.requirement if position_question else ""
             ),
             position_title=position.title if position else "",
+            agent_mode=resolved_agent_mode,
+            agent_ids=resolved_agent_ids,
         )
         self._save_session(session_id, state, expected_version=0)
         return session_id, state
@@ -1370,7 +1546,12 @@ class InterviewService:
                 raise ValueError("candidate_id does not match session owner")
         old_profile, old_profile_version = self._read_profile_with_version(owner)
         profile = copy.deepcopy(old_profile)
-        agent = self._agent_for_profile(profile, ReviewMode(state.review_mode))
+        agent = self._agent_for_profile(
+            profile,
+            ReviewMode(state.review_mode),
+            state.agent_mode,
+            state.agent_ids,
+        )
         workflow = self._workflow_for_agent(agent)
         if self.workflow_checkpointer is None:
             updated = workflow.resume(state, answer)
